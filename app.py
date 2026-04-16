@@ -349,13 +349,21 @@ def get_player_stats():
     return jsonify(stats)
 
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+_plt = None
+
+def _get_plt():
+    global _plt
+    if _plt is None:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        _plt = plt
+    return _plt
 
 
 def _make_movement_graph(player_name, trail):
     """Generate a 2D movement graph (XZ plane) and return as bytes."""
+    plt = _get_plt()
 
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     if not trail:
