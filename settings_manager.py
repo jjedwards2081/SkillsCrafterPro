@@ -28,6 +28,7 @@ DEFAULT_SETTINGS = {
     "welcome_message": DEFAULT_WELCOME_MESSAGE,
     "welcome_color": "green",  # Minecraft color code name
     "show_trace_paths": True,  # show fading movement trails on the 2D map
+    "report_detail_level": 3,  # 1 (minimal) to 5 (comprehensive)
 }
 
 

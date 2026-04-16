@@ -141,6 +141,8 @@ def update_settings():
         current["welcome_color"] = data["welcome_color"]
     if "show_trace_paths" in data:
         current["show_trace_paths"] = data["show_trace_paths"]
+    if "report_detail_level" in data:
+        current["report_detail_level"] = max(1, min(5, int(data["report_detail_level"])))
 
     if "llm_api_key" in data and data["llm_api_key"] and "*" not in data["llm_api_key"]:
         current["llm_api_key"] = data["llm_api_key"]
@@ -422,22 +424,33 @@ def _build_player_summary(name, stats):
     }
 
 
-def _assess_one_player(name, summary, criteria_text, rubric_name):
+DETAIL_INSTRUCTIONS = {
+    1: ("Give a single sentence per criterion. Synoptic assessment: 1-2 sentences.", 512),
+    2: ("Give 1-2 sentences per criterion citing key numbers. Synoptic assessment: 2-3 sentences.", 768),
+    3: ("Give a short paragraph per criterion with specific evidence from the data. Synoptic assessment: a paragraph.", 1024),
+    4: ("Give a detailed paragraph per criterion analysing the data thoroughly, noting patterns and context. Synoptic assessment: a detailed paragraph considering all criteria.", 1536),
+    5: ("Give a comprehensive, in-depth analysis per criterion covering all available evidence, patterns, comparisons, and implications. Synoptic assessment: a thorough multi-paragraph holistic analysis.", 2048),
+}
+
+
+def _assess_one_player(name, summary, criteria_text, rubric_name, detail_level=3):
     """Call the LLM to assess a single player. Returns parsed dict."""
+    detail_instruction, max_tok = DETAIL_INSTRUCTIONS.get(detail_level, DETAIL_INSTRUCTIONS[3])
+
     prompt = (
         f"Assess Minecraft Education player \"{name}\" against this rubric.\n\n"
         f"RUBRIC: {rubric_name}\nCRITERIA:\n{criteria_text}\n\n"
         f"PLAYER DATA: {json.dumps(summary)}\n\n"
-        f"INSTRUCTIONS: No grades/scores. For each criterion give a brief observation "
-        f"citing specific data. Set sufficient_data=false if data is lacking. "
-        f"End with a short synoptic assessment.\n\n"
+        f"INSTRUCTIONS: No grades/scores. {detail_instruction} "
+        f"Set sufficient_data=false if data is lacking. "
+        f"Cite specific numbers and actions from the data.\n\n"
         f"Return ONLY JSON: {{\"criteria_assessments\": [{{\"criterion\": \"...\", "
         f"\"observation\": \"...\", \"sufficient_data\": true/false}}], "
         f"\"synoptic_assessment\": \"...\"}}"
     )
     result = _llm_chat(prompt,
                         system="Education assessment expert. Return ONLY valid JSON. No grades.",
-                        max_tokens=1024)
+                        max_tokens=max_tok)
     start = result.find("{")
     end = result.rfind("}") + 1
     return json.loads(result[start:end])
@@ -463,9 +476,11 @@ def run_assessment():
 
     settings = load_settings()
     provider = settings.get("llm_provider", "unknown")
+    detail_level = settings.get("report_detail_level", 3)
     _, _, model_name = _get_llm_client()
     model_label = f"{provider.upper()} / {model_name}" if model_name else "Unknown"
     assessment_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    detail_labels = {1: "Minimal", 2: "Brief", 3: "Standard", 4: "Detailed", 5: "Comprehensive"}
 
     criteria_text = "\n".join(
         f"- {c['name']}: {c['description']}" for c in rubric.get("criteria", [])
@@ -480,7 +495,7 @@ def run_assessment():
         summary = _build_player_summary(name, selected_stats)
         player_summaries[name] = summary
         try:
-            result = _assess_one_player(name, summary, criteria_text, rubric["name"])
+            result = _assess_one_player(name, summary, criteria_text, rubric["name"], detail_level)
             result["player"] = name
             assessments.append(result)
         except Exception as e:
@@ -502,11 +517,12 @@ def run_assessment():
     doc.add_heading("Skills Crafter Assessment Report", level=0)
     doc.add_paragraph("")
 
-    meta_table = doc.add_table(rows=5, cols=2)
+    meta_table = doc.add_table(rows=6, cols=2)
     meta_table.style = "Light List Accent 1"
     for i, (label, val) in enumerate([
         ("Date & Time", assessment_time),
         ("AI Model", model_label),
+        ("Report Detail", f"Level {detail_level} — {detail_labels.get(detail_level, 'Standard')}"),
         ("Rubric", rubric["name"]),
         ("Players Assessed", ", ".join(player_names)),
         ("Criteria Count", str(len(rubric.get("criteria", [])))),

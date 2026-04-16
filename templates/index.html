@@ -247,6 +247,20 @@
                 <div class="form-group"><label>Preview</label><div class="welcome-preview" id="welcomePreview"></div></div>
             </div>
             <div class="settings-section">
+                <h3>Assessment Reports</h3>
+                <p class="section-desc">Control the level of detail in AI-generated assessment reports.</p>
+                <div class="form-group">
+                    <label for="reportDetailLevel" style="margin-bottom:8px;">Report Detail Level</label>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <span style="font-size:12px;color:#605e5c;white-space:nowrap;">Minimal</span>
+                        <input type="range" id="reportDetailLevel" min="1" max="5" step="1" value="3"
+                            style="flex:1;accent-color:#0078d4;" oninput="updateDetailLabel(this.value)">
+                        <span style="font-size:12px;color:#605e5c;white-space:nowrap;">Comprehensive</span>
+                    </div>
+                    <div id="detailLevelLabel" style="text-align:center;font-size:12px;font-weight:600;color:#0078d4;margin-top:6px;">Level 3 — Standard</div>
+                </div>
+            </div>
+            <div class="settings-section">
                 <h3>Map Settings</h3>
                 <p class="section-desc">Configure the 2D player map display.</p>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
@@ -480,6 +494,8 @@
                 document.getElementById('welcomeMessage').value = s.welcome_message||'';
                 selectedColor = s.welcome_color||'green';
                 document.getElementById('showTracePaths').checked = s.show_trace_paths !== false;
+                document.getElementById('reportDetailLevel').value = s.report_detail_level || 3;
+                updateDetailLabel(s.report_detail_level || 3);
                 onProviderChange(); renderApiKeyStatus(s); buildColorPicker(); updateWelcomePreview();
                 document.getElementById('settingsOverlay').classList.add('open');
             });
@@ -498,10 +514,16 @@
                 onProviderChange(); renderApiKeyStatus({llm_api_key:'',llm_provider:''}); setLlmStatus('disconnected'); showToast('API key removed');
             });
         }
+        const DETAIL_LABELS = {1:'Minimal', 2:'Brief', 3:'Standard', 4:'Detailed', 5:'Comprehensive'};
+        function updateDetailLabel(v) {
+            document.getElementById('detailLevelLabel').textContent = 'Level ' + v + ' — ' + (DETAIL_LABELS[v] || 'Standard');
+        }
+
         function saveSettings() {
             const provider=document.getElementById('llmProvider').value, apiKey=document.getElementById('llmApiKey').value, endpoint=document.getElementById('llmEndpoint').value;
             const traceOn=document.getElementById('showTracePaths').checked;
-            fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:provider,llm_endpoint:endpoint,llm_api_key:apiKey,welcome_message:document.getElementById('welcomeMessage').value,welcome_color:selectedColor,show_trace_paths:traceOn})
+            const detailLevel=parseInt(document.getElementById('reportDetailLevel').value);
+            fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:provider,llm_endpoint:endpoint,llm_api_key:apiKey,welcome_message:document.getElementById('welcomeMessage').value,welcome_color:selectedColor,show_trace_paths:traceOn,report_detail_level:detailLevel})
             }).then(r=>r.json()).then(res=>{
                 if(res.status==='ok'){
                     showTracePaths=traceOn;
