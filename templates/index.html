@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skills Crafter</title>
+    <link rel="icon" type="image/png" href="/static/images/skills_crafter.png">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #f3f2f1;
+            color: #323130;
+            min-height: 100vh;
+        }
+
+        header {
+            background: #0078d4;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+        }
+
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 36px; height: 36px; border-radius: 6px; object-fit: contain; }
+        .logo h1 { font-size: 20px; font-weight: 600; color: #ffffff; }
+
+        .server-controls { display: flex; align-items: center; gap: 12px; }
+
+
+        .btn { padding: 6px 16px; border: none; border-radius: 3px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .server-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+        .server-switch input { display: none; }
+        .switch-track {
+            width: 40px; height: 22px; border-radius: 11px;
+            background: rgba(255,255,255,0.25); position: relative;
+            transition: background 0.25s;
+        }
+        .switch-track::after {
+            content: ''; position: absolute; top: 3px; left: 3px;
+            width: 16px; height: 16px; border-radius: 50%;
+            background: #ffffff; transition: transform 0.25s;
+        }
+        .server-switch input:checked + .switch-track {
+            background: #92c353;
+        }
+        .server-switch input:checked + .switch-track::after {
+            transform: translateX(18px);
+        }
+        .switch-label { font-size: 13px; color: rgba(255,255,255,0.8); font-weight: 600; user-select: none; }
+
+        .llm-status { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(255,255,255,0.1); border-radius: 3px; }
+        .llm-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.3); transition: background 0.3s; }
+        .llm-dot.connected { background: #92c353; box-shadow: 0 0 6px #92c353; }
+        .llm-dot.error { background: #d13438; box-shadow: 0 0 6px #d13438; }
+        .llm-dot.testing { background: #ca5010; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        .llm-label { font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 600; }
+
+        .btn-settings { background: rgba(255,255,255,0.15); color: #ffffff; padding: 6px 12px; font-size: 16px; line-height: 1; }
+        .btn-settings:hover { background: rgba(255,255,255,0.25); }
+
+        /* Layout: connection row, then left column (log + assessment) and right column (map) */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto 1fr 1fr;
+            gap: 12px;
+            padding: 12px;
+            height: calc(100vh - 61px);
+        }
+
+        .panel { background: #ffffff; border-radius: 4px; border: 1px solid #edebe9; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .panel-header { padding: 10px 16px; background: #faf9f8; border-bottom: 1px solid #edebe9; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #0078d4; display: flex; align-items: center; gap: 8px; }
+        .panel-body { padding: 16px; flex: 1; overflow: auto; }
+
+        .connection-panel { grid-column: 1 / -1; grid-row: 1; }
+        .log-panel { grid-column: 1; grid-row: 2; min-height: 0; }
+        .assessment-panel { grid-column: 1; grid-row: 3; min-height: 0; }
+        .map-panel { grid-column: 2; grid-row: 2 / 4; min-height: 0; }
+
+        .connect-info { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .connect-command { background: #faf9f8; border: 1px solid #8a8886; border-radius: 4px; padding: 10px 16px; font-family: 'Cascadia Code','Consolas','Courier New',monospace; font-size: 15px; color: #323130; display: flex; align-items: center; gap: 12px; }
+        .connect-command .prefix { color: #0078d4; font-weight: 700; }
+
+        .copy-btn { background: #0078d4; border: none; color: #ffffff; padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .copy-btn:hover { background: #106ebe; }
+        .connect-help { font-size: 13px; color: #605e5c; }
+        .player-count { margin-left: auto; font-size: 14px; color: #0078d4; font-weight: 600; }
+
+        .log-list { font-family: 'Cascadia Code','Consolas','Courier New',monospace; font-size: 12px; line-height: 1.7; }
+        .log-entry { padding: 2px 0; border-bottom: 1px solid #f3f2f1; }
+        .log-entry .time { color: #a19f9d; margin-right: 8px; }
+        .log-entry.info { color: #323130; }
+        .log-entry.success { color: #107c10; }
+        .log-entry.warn { color: #ca5010; }
+        .log-entry.error { color: #d13438; }
+
+        .map-container { position: relative; width: 100%; height: 100%; min-height: 200px; }
+        #playerMap { width: 100%; height: 100%; background: #ffffff; border-radius: 4px; border: 1px solid #edebe9; }
+        .map-legend { position: absolute; bottom: 8px; left: 8px; background: rgba(250,249,248,0.9); padding: 6px 10px; border-radius: 3px; font-size: 11px; color: #605e5c; border: 1px solid #edebe9; }
+
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #a19f9d; text-align: center; gap: 8px; }
+        .empty-state .icon { font-size: 32px; opacity: 0.5; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #c8c6c4; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #a19f9d; }
+
+        /* Assessment buttons */
+        .assess-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+        .assess-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 20px; border: 1px solid #edebe9; border-radius: 6px; background: #faf9f8; cursor: pointer; transition: all 0.15s; flex: 1; min-width: 140px; }
+        .assess-btn:hover { border-color: #0078d4; background: #deecf9; }
+        .assess-btn .ab-icon { font-size: 24px; }
+        .assess-btn .ab-label { font-size: 13px; font-weight: 600; color: #323130; }
+        .assess-btn .ab-desc { font-size: 11px; color: #605e5c; text-align: center; }
+        .assess-btn.disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+        /* --- Modal (shared) --- */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 50px; }
+        .modal-overlay.open { display: flex; }
+        .modal-panel { background: #ffffff; border-radius: 6px; width: 620px; max-height: calc(100vh - 100px); overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.2); border: 1px solid #edebe9; }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #edebe9; background: #faf9f8; }
+        .modal-header h2 { font-size: 18px; font-weight: 600; color: #323130; }
+        .modal-close { background: none; border: none; font-size: 20px; color: #605e5c; cursor: pointer; padding: 4px 8px; border-radius: 3px; }
+        .modal-close:hover { background: #f3f2f1; color: #323130; }
+        .modal-body { padding: 20px; }
+        .modal-footer { display: flex; gap: 8px; justify-content: flex-end; padding: 16px 20px; background: #faf9f8; border-top: 1px solid #edebe9; }
+
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 600; color: #323130; margin-bottom: 4px; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 7px 10px; border: 1px solid #8a8886; border-radius: 3px; font-size: 13px; font-family: 'Segoe UI', system-ui, sans-serif; color: #323130; background: #ffffff; transition: border-color 0.15s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: #0078d4; box-shadow: 0 0 0 1px #0078d4; }
+        .form-group textarea { min-height: 80px; resize: vertical; line-height: 1.5; }
+        .form-row { display: flex; gap: 12px; align-items: flex-end; }
+        .form-row .form-group { flex: 1; }
+
+        .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 3px; border: none; cursor: pointer; font-weight: 600; font-family: 'Segoe UI', system-ui, sans-serif; }
+        .btn-primary { background: #0078d4; color: #ffffff; }
+        .btn-primary:hover { background: #106ebe; }
+        .btn-danger { background: #d13438; color: #ffffff; }
+        .btn-danger:hover { background: #a4262c; }
+        .btn-secondary { background: #f3f2f1; color: #323130; border: 1px solid #8a8886; }
+        .btn-secondary:hover { background: #edebe9; }
+
+        .api-key-display { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: #faf9f8; border: 1px solid #edebe9; border-radius: 3px; font-family: 'Cascadia Code','Consolas',monospace; font-size: 13px; color: #605e5c; margin-bottom: 14px; }
+        .api-key-display .key-text { flex: 1; }
+
+        .settings-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 60px; }
+        .settings-overlay.open { display: flex; }
+        .settings-panel { background: #ffffff; border-radius: 6px; width: 560px; max-height: calc(100vh - 100px); overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.2); border: 1px solid #edebe9; }
+        .settings-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #edebe9; background: #faf9f8; }
+        .settings-header h2 { font-size: 18px; font-weight: 600; color: #323130; }
+        .settings-close { background: none; border: none; font-size: 20px; color: #605e5c; cursor: pointer; padding: 4px 8px; border-radius: 3px; }
+        .settings-close:hover { background: #f3f2f1; color: #323130; }
+        .settings-section { padding: 20px; border-bottom: 1px solid #edebe9; }
+        .settings-section:last-child { border-bottom: none; }
+        .settings-section h3 { font-size: 14px; font-weight: 600; color: #0078d4; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .settings-section .section-desc { font-size: 12px; color: #605e5c; margin-bottom: 16px; }
+        .settings-actions { display: flex; gap: 8px; justify-content: flex-end; padding: 16px 20px; background: #faf9f8; border-top: 1px solid #edebe9; }
+
+        .welcome-preview { padding: 10px 14px; background: #1b1a19; border-radius: 4px; font-family: 'Cascadia Code','Consolas',monospace; font-size: 13px; margin-top: 8px; min-height: 40px; }
+        .color-picker-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .color-swatch { width: 28px; height: 28px; border-radius: 3px; cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s, transform 0.1s; }
+        .color-swatch:hover { transform: scale(1.15); }
+        .color-swatch.selected { border-color: #323130; }
+
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #107c10; color: white; padding: 10px 20px; border-radius: 4px; font-size: 13px; font-weight: 600; z-index: 200; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+
+        /* Rubric criteria list */
+        .criteria-list { margin-bottom: 12px; }
+        .criterion-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #faf9f8; border: 1px solid #edebe9; border-radius: 3px; margin-bottom: 6px; }
+        .criterion-item .ci-name { font-weight: 600; font-size: 13px; flex: 1; }
+        .criterion-item .ci-desc { font-size: 12px; color: #605e5c; flex: 2; }
+        .criterion-item .ci-remove { background: none; border: none; color: #d13438; cursor: pointer; font-size: 16px; }
+
+        /* Player checkboxes */
+        .player-check-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; border: 1px solid #edebe9; border-radius: 3px; padding: 8px; }
+        .player-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+        .player-check input { accent-color: #0078d4; }
+
+        /* Game controls */
+        .gc-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+        .gc-preset { padding: 6px 14px; border: 1px solid #edebe9; border-radius: 3px; background: #faf9f8; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s; }
+        .gc-preset:hover { border-color: #0078d4; background: #deecf9; }
+
+        .gc-log { font-family: 'Cascadia Code','Consolas',monospace; font-size: 12px; background: #faf9f8; border: 1px solid #edebe9; border-radius: 3px; padding: 8px; max-height: 120px; overflow-y: auto; margin-top: 12px; }
+        .gc-log-entry { padding: 2px 0; color: #323130; }
+        .gc-log-entry.sent { color: #0078d4; }
+        .gc-log-entry.error { color: #d13438; }
+
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #c8c6c4; border-top-color: #0078d4; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .rubric-saved-list { margin-bottom: 16px; }
+        .rubric-saved-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #edebe9; border-radius: 3px; margin-bottom: 4px; }
+        .rubric-saved-item .rsi-name { font-weight: 600; font-size: 13px; flex: 1; }
+        .rubric-saved-item .rsi-count { font-size: 12px; color: #605e5c; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <img class="logo-icon" src="/static/images/skills_crafter.png" alt="Skills Crafter">
+            <h1>Skills Crafter</h1>
+        </div>
+        <div class="server-controls">
+            <label class="server-switch" title="Toggle server">
+                <input type="checkbox" id="serverToggle" onchange="toggleServer(this.checked)">
+                <div class="switch-track"></div>
+                <span class="switch-label" id="statusLabel">Server Off</span>
+            </label>
+            <div class="llm-status" id="llmStatus" title="LLM not connected">
+                <div class="llm-dot" id="llmDot"></div>
+                <span class="llm-label" id="llmLabel">LLM</span>
+            </div>
+            <button class="btn btn-settings" onclick="openSettings()" title="Settings">&#9881;</button>
+        </div>
+    </header>
+
+    <!-- Settings Overlay -->
+    <div class="settings-overlay" id="settingsOverlay" onclick="if(event.target===this)closeSettings()">
+        <div class="settings-panel">
+            <div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()">&#10005;</button></div>
+            <div class="settings-section">
+                <h3>LLM API Configuration</h3>
+                <p class="section-desc">Connect an AI provider to enable intelligent features. Your API key is encrypted and stored locally.</p>
+                <div id="apiKeyStatus"></div>
+                <div class="form-row"><div class="form-group"><label for="llmProvider">Provider</label>
+                    <select id="llmProvider" onchange="onProviderChange()"><option value="">-- Select Provider --</option><option value="azure">Azure Foundry</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
+                </div></div>
+                <div id="azureEndpointGroup" class="form-group" style="display:none;"><label for="llmEndpoint">Azure Endpoint URL</label><input type="text" id="llmEndpoint" placeholder="https://your-resource.openai.azure.com/"></div>
+                <div class="form-group"><label for="llmApiKey">API Key</label><input type="password" id="llmApiKey" placeholder="Enter your API key"></div>
+            </div>
+            <div class="settings-section">
+                <h3>Welcome Message</h3>
+                <p class="section-desc">This message is sent to players when they connect to the server via Minecraft chat.</p>
+                <div class="form-group"><label for="welcomeMessage">Message</label><textarea id="welcomeMessage" placeholder="Enter welcome message..."></textarea></div>
+                <div class="form-group"><label>Message Color</label><div class="color-picker-row" id="colorPicker"></div></div>
+                <div class="form-group"><label>Preview</label><div class="welcome-preview" id="welcomePreview"></div></div>
+            </div>
+            <div class="settings-section">
+                <h3>Map Settings</h3>
+                <p class="section-desc">Configure the 2D player map display.</p>
+                <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" id="showTracePaths" style="accent-color:#0078d4;width:16px;height:16px;">
+                    Show player trace paths (fading trails showing movement over the last 60 seconds)
+                </label>
+            </div>
+            <div class="settings-actions"><button class="btn-sm btn-secondary" onclick="closeSettings()">Cancel</button><button class="btn-sm btn-primary" onclick="saveSettings()">Save Settings</button></div>
+        </div>
+    </div>
+
+    <!-- Rubric Modal -->
+    <div class="modal-overlay" id="rubricModal" onclick="if(event.target===this)closeModal('rubricModal')">
+        <div class="modal-panel">
+            <div class="modal-header"><h2 id="rubricModalTitle">Add Rubric</h2><button class="modal-close" onclick="closeModal('rubricModal')">&#10005;</button></div>
+            <div class="modal-body">
+                <div class="rubric-saved-list" id="savedRubricsList"></div>
+
+                <h3 style="font-size:14px;font-weight:600;color:#0078d4;margin-bottom:12px;" id="rubricEditorTitle">CREATE NEW RUBRIC</h3>
+
+                <!-- AI Suggest from description -->
+                <div style="border:1px solid #deecf9;border-radius:4px;padding:12px;background:#f0f6ff;margin-bottom:14px;">
+                    <div class="form-group" style="margin-bottom:8px;">
+                        <label for="rubricDescribe">Describe what you want to assess</label>
+                        <textarea id="rubricDescribe" rows="3" placeholder="e.g. I want to assess how well students collaborate on building projects, their problem-solving skills, and whether they communicate effectively in chat..." style="min-height:60px;"></textarea>
+                    </div>
+                    <button class="btn-sm btn-primary" onclick="suggestCriteria()" id="suggestBtn">Suggest Criteria with AI</button>
+                </div>
+
+                <!-- Upload file for AI -->
+                <div class="form-group"><label>Or upload a file for AI analysis</label>
+                    <div class="form-row">
+                        <div class="form-group"><input type="file" id="rubricFile" accept=".txt,.csv,.md,.pdf,.doc,.docx,.json"></div>
+                        <button class="btn-sm btn-primary" onclick="generateRubricFromFile()" id="genRubricBtn">Generate from File</button>
+                    </div>
+                </div>
+
+                <div style="border-top:1px solid #edebe9;margin:14px 0;"></div>
+
+                <div class="form-group"><label for="rubricName">Rubric Name</label><input type="text" id="rubricName" placeholder="e.g. Collaboration Skills"></div>
+
+                <div class="criteria-list" id="criteriaList"></div>
+
+                <div style="border:1px solid #edebe9;border-radius:4px;padding:12px;background:#faf9f8;margin-bottom:12px;">
+                    <div class="form-group"><label for="newCritName">Criterion Name</label><input type="text" id="newCritName" placeholder="e.g. Teamwork"></div>
+                    <div class="form-group"><label for="newCritDesc">Description</label><input type="text" id="newCritDesc" placeholder="What should be assessed?"></div>
+                    <button class="btn-sm btn-primary" onclick="addCriterion()">+ Add Criterion</button>
+                </div>
+
+                <div id="rubricGenStatus"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-sm btn-secondary" onclick="closeModal('rubricModal')">Cancel</button>
+                <button class="btn-sm btn-primary" onclick="saveRubric()" id="saveRubricBtn">Save Rubric</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Assessment Modal -->
+    <div class="modal-overlay" id="assessModal" onclick="if(event.target===this)closeModal('assessModal')">
+        <div class="modal-panel">
+            <div class="modal-header"><h2>Carry Out Assessment</h2><button class="modal-close" onclick="closeModal('assessModal')">&#10005;</button></div>
+            <div class="modal-body">
+                <div class="form-group"><label>Select Rubric</label>
+                    <select id="assessRubricSelect"><option value="">-- Select a rubric --</option></select>
+                </div>
+                <div class="form-group"><label>Select Players</label>
+                    <div class="player-check-list" id="assessPlayerList"><span style="color:#a19f9d;font-size:13px;">No players connected</span></div>
+                </div>
+                <div id="assessStatus"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-sm btn-secondary" onclick="closeModal('assessModal')">Cancel</button><button class="btn-sm btn-primary" onclick="runAssessment()" id="runAssessBtn">Run Assessment</button></div>
+        </div>
+    </div>
+
+    <!-- Game Controls Modal -->
+    <div class="modal-overlay" id="gameCtrlModal" onclick="if(event.target===this)closeModal('gameCtrlModal')">
+        <div class="modal-panel">
+            <div class="modal-header"><h2>Game Controls</h2><button class="modal-close" onclick="closeModal('gameCtrlModal')">&#10005;</button></div>
+            <div class="modal-body">
+                <div class="form-group"><label>Target Players</label>
+                    <select id="gcTarget">
+                        <option value="@a">All Players (@a)</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>Quick Commands</label>
+                    <div class="gc-presets">
+                        <div class="gc-preset" onclick="sendPreset('gamemode creative @s')">Creative Mode</div>
+                        <div class="gc-preset" onclick="sendPreset('gamemode survival @s')">Survival Mode</div>
+                        <div class="gc-preset" onclick="sendPreset('gamemode adventure @s')">Adventure Mode</div>
+                        <div class="gc-preset" onclick="sendPreset('time set day')">Set Day</div>
+                        <div class="gc-preset" onclick="sendPreset('time set night')">Set Night</div>
+                        <div class="gc-preset" onclick="sendPreset('weather clear')">Clear Weather</div>
+                        <div class="gc-preset" onclick="sendPreset('weather rain')">Rain</div>
+                        <div class="gc-preset" onclick="sendPreset('weather thunder')">Thunder</div>
+                        <div class="gc-preset" onclick="sendPreset('effect @s regeneration 30 2')">Heal</div>
+                        <div class="gc-preset" onclick="sendPreset('effect @s speed 60 2')">Speed Boost</div>
+                        <div class="gc-preset" onclick="sendPreset('tp @s 0 65 0')">Teleport to Origin</div>
+                    </div>
+                </div>
+                <div class="form-group"><label>Custom Command</label>
+                    <div class="form-row">
+                        <div class="form-group"><input type="text" id="gcCustomCmd" placeholder="e.g. say Hello everyone!"></div>
+                        <button class="btn-sm btn-primary" onclick="sendCustomCommand()">Send</button>
+                    </div>
+                    <div style="font-size:11px;color:#605e5c;margin-top:4px;">Use @s for target selection. It will be replaced with the selected target.</div>
+                </div>
+                <div class="gc-log" id="gcLog"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-sm btn-secondary" onclick="closeModal('gameCtrlModal')">Close</button></div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="main-layout">
+        <div class="panel connection-panel">
+            <div class="panel-header">&#128279; Connection</div>
+            <div class="panel-body">
+                <div class="connect-info">
+                    <div class="connect-command"><span class="prefix">/connect</span><span id="connectAddr">{{ local_ip }}:{{ ws_port }}</span><button class="copy-btn" onclick="copyConnect()">Copy</button></div>
+                    <span class="connect-help">Run this command in Minecraft Education chat to connect</span>
+                    <span class="player-count" id="playerCount">0 players connected</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel log-panel">
+            <div class="panel-header">&#128220; Event Log
+                <button class="copy-btn" style="margin-left:auto;" onclick="exportLog()">Export</button>
+                <button class="copy-btn" onclick="clearLog()">Clear</button>
+            </div>
+            <div class="panel-body">
+                <div class="log-list" id="logList">
+                    <div class="empty-state" id="logEmpty"><div class="icon">&#128196;</div><div>Start the server to see events</div></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel assessment-panel">
+            <div class="panel-header">&#128218; Assessment</div>
+            <div class="panel-body" style="display:flex;align-items:center;justify-content:center;">
+                <div class="assess-buttons">
+                    <div class="assess-btn" id="btnAddRubric" onclick="openRubricModal()">
+                        <div class="ab-icon">&#128203;</div>
+                        <div class="ab-label">Add Rubric</div>
+                        <div class="ab-desc">Define or upload assessment criteria</div>
+                    </div>
+                    <div class="assess-btn" id="btnAssess" onclick="openAssessModal()">
+                        <div class="ab-icon">&#128200;</div>
+                        <div class="ab-label">Carry Out Assessment</div>
+                        <div class="ab-desc">Assess players and generate a report</div>
+                    </div>
+                    <div class="assess-btn" onclick="openGameCtrlModal()">
+                        <div class="ab-icon">&#127918;</div>
+                        <div class="ab-label">Game Controls</div>
+                        <div class="ab-desc">Send commands to the Minecraft world</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel map-panel">
+            <div class="panel-header">&#127758; Player Map <span style="margin-left:auto;font-size:11px;color:#a19f9d;text-transform:none;letter-spacing:0;font-weight:400;">top-down XZ view</span></div>
+            <div class="panel-body" style="padding:8px;">
+                <div class="map-container"><canvas id="playerMap"></canvas><div class="map-legend">Grid = 16 blocks &middot; Scroll to zoom</div></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        let players = [];
+        let serverRunning = {{ 'true' if server_running else 'false' }};
+        let llmConnected = false;
+        let rubricCriteria = []; // temp for rubric creation
+        let showTracePaths = {{ 'true' if settings.show_trace_paths else 'false' }};
+        let playerTrails = {}; // name -> [{t, x, z}, ...]
+
+        const MC_COLORS = {
+            'dark_red':'#AA0000','red':'#FF5555','gold':'#FFAA00','yellow':'#FFFF55',
+            'dark_green':'#00AA00','green':'#55FF55','aqua':'#55FFFF','dark_aqua':'#00AAAA',
+            'dark_blue':'#0000AA','blue':'#5555FF','light_purple':'#FF55FF','dark_purple':'#AA00AA',
+            'white':'#FFFFFF','gray':'#AAAAAA','dark_gray':'#555555','black':'#000000',
+        };
+        let selectedColor = '{{ settings.welcome_color }}' || 'green';
+
+        // --- Helpers ---
+        function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+        function showToast(msg, dur) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), dur || 2500); }
+        function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+        // --- Server Controls ---
+        function toggleServer(on) {
+            if (on) socket.emit('start_server');
+            else socket.emit('stop_server');
+        }
+        function updateUI(running) {
+            serverRunning = running;
+            document.getElementById('serverToggle').checked = running;
+            document.getElementById('statusLabel').textContent = running ? 'Server On' : 'Server Off';
+        }
+        function copyConnect() {
+            navigator.clipboard.writeText('/connect ' + document.getElementById('connectAddr').textContent);
+            const btn = event.target; btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
+        }
+
+        // --- Settings ---
+        function openSettings() {
+            fetch('/api/settings').then(r=>r.json()).then(s => {
+                document.getElementById('llmProvider').value = s.llm_provider||'';
+                document.getElementById('llmEndpoint').value = s.llm_endpoint||'';
+                document.getElementById('llmApiKey').value = '';
+                document.getElementById('welcomeMessage').value = s.welcome_message||'';
+                selectedColor = s.welcome_color||'green';
+                document.getElementById('showTracePaths').checked = s.show_trace_paths !== false;
+                onProviderChange(); renderApiKeyStatus(s); buildColorPicker(); updateWelcomePreview();
+                document.getElementById('settingsOverlay').classList.add('open');
+            });
+        }
+        function closeSettings() { document.getElementById('settingsOverlay').classList.remove('open'); }
+        function onProviderChange() { document.getElementById('azureEndpointGroup').style.display = document.getElementById('llmProvider').value==='azure'?'':'none'; }
+        function renderApiKeyStatus(s) {
+            const el = document.getElementById('apiKeyStatus');
+            if (s.llm_api_key && s.llm_api_key.includes('*')) {
+                el.innerHTML='<div class="api-key-display"><span class="key-text">'+escapeHtml(s.llm_api_key)+'</span><span style="color:#107c10;font-weight:600;font-size:12px;">'+escapeHtml(s.llm_provider.toUpperCase())+'</span><button class="btn-sm btn-danger" onclick="deleteApiKey()">Remove</button></div>';
+            } else { el.innerHTML=''; }
+        }
+        function deleteApiKey() {
+            fetch('/api/settings/delete-key',{method:'POST'}).then(r=>r.json()).then(()=>{
+                document.getElementById('llmProvider').value=''; document.getElementById('llmEndpoint').value=''; document.getElementById('llmApiKey').value='';
+                onProviderChange(); renderApiKeyStatus({llm_api_key:'',llm_provider:''}); setLlmStatus('disconnected'); showToast('API key removed');
+            });
+        }
+        function saveSettings() {
+            const provider=document.getElementById('llmProvider').value, apiKey=document.getElementById('llmApiKey').value, endpoint=document.getElementById('llmEndpoint').value;
+            const traceOn=document.getElementById('showTracePaths').checked;
+            fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:provider,llm_endpoint:endpoint,llm_api_key:apiKey,welcome_message:document.getElementById('welcomeMessage').value,welcome_color:selectedColor,show_trace_paths:traceOn})
+            }).then(r=>r.json()).then(res=>{
+                if(res.status==='ok'){
+                    showTracePaths=traceOn;
+                    showToast('Settings saved');closeSettings();
+                    if(res.settings.llm_api_key&&res.settings.llm_provider)testLlmConnection(res.settings.llm_provider,apiKey,endpoint);
+                }
+            });
+        }
+        function buildColorPicker() {
+            const c=document.getElementById('colorPicker');c.innerHTML='';
+            for(const[name,hex]of Object.entries(MC_COLORS)){const s=document.createElement('div');s.className='color-swatch'+(name===selectedColor?' selected':'');s.style.background=hex;if(name==='white'||name==='yellow')s.style.border='2px solid '+(name===selectedColor?'#323130':'#c8c6c4');s.title=name;s.onclick=()=>{selectedColor=name;buildColorPicker();updateWelcomePreview();};c.appendChild(s);}
+        }
+        function updateWelcomePreview(){const m=document.getElementById('welcomeMessage').value||'';document.getElementById('welcomePreview').innerHTML='<span style="color:'+(MC_COLORS[selectedColor]||'#55FF55')+'">'+escapeHtml(m)+'</span>';}
+        document.addEventListener('DOMContentLoaded',()=>document.getElementById('welcomeMessage').addEventListener('input',updateWelcomePreview));
+
+        // --- LLM Status ---
+        function setLlmStatus(state,provider){
+            const dot=document.getElementById('llmDot'),label=document.getElementById('llmLabel'),c=document.getElementById('llmStatus');
+            dot.classList.remove('connected','error','testing');
+            if(state==='connected'){dot.classList.add('connected');label.textContent=provider?provider.toUpperCase():'LLM';c.title='LLM connected ('+provider+')';llmConnected=true;updateAssessBtns();}
+            else if(state==='testing'){dot.classList.add('testing');label.textContent='Testing...';c.title='Testing LLM connection...';}
+            else if(state==='error'){dot.classList.add('error');label.textContent='LLM';c.title='LLM connection failed';llmConnected=false;updateAssessBtns();}
+            else{label.textContent='LLM';c.title='LLM not connected';llmConnected=false;updateAssessBtns();}
+        }
+        function testLlmConnection(provider,apiKey,endpoint){
+            setLlmStatus('testing');const body={};if(provider)body.provider=provider;if(apiKey)body.api_key=apiKey;if(endpoint)body.endpoint=endpoint;
+            return fetch('/api/settings/test-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(res=>{
+                if(res.connected)setLlmStatus('connected',provider||'');else{setLlmStatus('error');if(res.error)showToast('LLM: '+res.error.substring(0,80));}return res;
+            }).catch(()=>setLlmStatus('error'));
+        }
+        (function(){fetch('/api/settings').then(r=>r.json()).then(s=>{if(s.llm_api_key&&s.llm_provider)testLlmConnection(s.llm_provider);});})();
+
+        function updateAssessBtns(){
+            const r=document.getElementById('btnAddRubric');
+            r.classList.toggle('disabled',!llmConnected);
+            r.title=llmConnected?'':'Connect an LLM in Settings first';
+        }
+
+        // --- Event Log ---
+        const MAX_LOG_ENTRIES=500; let logData=[];
+        function addLog(entry){
+            logData.push(entry);if(logData.length>MAX_LOG_ENTRIES)logData.shift();
+            const l=document.getElementById('logList'),e=document.getElementById('logEmpty');if(e)e.remove();
+            const el=document.createElement('div');el.className='log-entry '+(entry.level||'info');
+            el.innerHTML='<span class="time">'+entry.timestamp+'</span>'+escapeHtml(entry.message);l.appendChild(el);
+            while(l.children.length>MAX_LOG_ENTRIES)l.removeChild(l.firstChild);l.parentElement.scrollTop=l.parentElement.scrollHeight;
+        }
+        function clearLog(){logData=[];document.getElementById('logList').innerHTML='<div class="empty-state" id="logEmpty"><div class="icon">&#128196;</div><div>Log cleared</div></div>';}
+        function exportLog(){
+            if(!logData.length)return;const b=new Blob([JSON.stringify(logData,null,2)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');
+            a.href=u;a.download='skills-crafter-log-'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.json';a.click();URL.revokeObjectURL(u);
+        }
+
+        // --- Rubric Modal ---
+        function openRubricModal(){
+            if(!llmConnected){showToast('Connect an LLM in Settings first');return;}
+            resetRubricEditor();
+            loadSavedRubrics();
+            document.getElementById('rubricModal').classList.add('open');
+        }
+        let editingRubricId = null; // set when editing a saved rubric
+
+        function loadSavedRubrics(){
+            fetch('/api/rubrics').then(r=>r.json()).then(rubrics=>{
+                const el=document.getElementById('savedRubricsList');
+                if(!rubrics.length){el.innerHTML='<div style="font-size:12px;color:#a19f9d;margin-bottom:12px;">No rubrics saved yet.</div>';return;}
+                el.innerHTML='<h3 style="font-size:14px;font-weight:600;color:#0078d4;margin-bottom:8px;">SAVED RUBRICS</h3>'+
+                    rubrics.map(r=>
+                        '<div class="rubric-saved-item">'
+                        +'<span class="rsi-name">'+escapeHtml(r.name)+'</span>'
+                        +'<span class="rsi-count">'+r.criteria.length+' criteria</span>'
+                        +'<button class="btn-sm btn-primary" onclick="editRubric(\''+r.id+'\')">Edit</button>'
+                        +'<button class="btn-sm btn-danger" onclick="deleteRubric(\''+r.id+'\')">Delete</button>'
+                        +'</div>'
+                    ).join('');
+            });
+        }
+        function deleteRubric(id){fetch('/api/rubrics/'+id,{method:'DELETE'}).then(()=>{loadSavedRubrics();if(editingRubricId===id)resetRubricEditor();});}
+
+        function editRubric(id){
+            fetch('/api/rubrics').then(r=>r.json()).then(rubrics=>{
+                const r=rubrics.find(x=>x.id===id);
+                if(!r)return;
+                editingRubricId=id;
+                document.getElementById('rubricName').value=r.name;
+                rubricCriteria=JSON.parse(JSON.stringify(r.criteria));
+                renderCriteriaList();
+                document.getElementById('rubricEditorTitle').textContent='EDITING: '+r.name;
+                document.getElementById('rubricModalTitle').textContent='Edit Rubric';
+                document.getElementById('saveRubricBtn').textContent='Update Rubric';
+                document.getElementById('rubricGenStatus').innerHTML='';
+            });
+        }
+
+        function resetRubricEditor(){
+            editingRubricId=null;
+            rubricCriteria=[];
+            renderCriteriaList();
+            document.getElementById('rubricName').value='';
+            document.getElementById('rubricDescribe').value='';
+            document.getElementById('rubricEditorTitle').textContent='CREATE NEW RUBRIC';
+            document.getElementById('rubricModalTitle').textContent='Add Rubric';
+            document.getElementById('saveRubricBtn').textContent='Save Rubric';
+            document.getElementById('rubricGenStatus').innerHTML='';
+        }
+
+        function renderCriteriaList(){
+            const el=document.getElementById('criteriaList');
+            if(!rubricCriteria.length){el.innerHTML='';return;}
+            el.innerHTML=rubricCriteria.map((c,i)=>
+                '<div class="criterion-item" style="flex-direction:column;align-items:stretch;gap:6px;">'
+                +'<div style="display:flex;align-items:center;gap:8px;">'
+                +'<input type="text" value="'+escapeHtml(c.name)+'" onchange="updateCriterion('+i+',\'name\',this.value)" style="flex:1;padding:4px 8px;border:1px solid #edebe9;border-radius:3px;font-size:13px;font-weight:600;">'
+                +'<button class="ci-remove" onclick="removeCriterion('+i+')" title="Remove">&#10005;</button>'
+                +'</div>'
+                +'<textarea onchange="updateCriterion('+i+',\'description\',this.value)" style="width:100%;padding:4px 8px;border:1px solid #edebe9;border-radius:3px;font-size:12px;min-height:40px;resize:vertical;font-family:inherit;">'+escapeHtml(c.description)+'</textarea>'
+                +'</div>'
+            ).join('');
+        }
+        function updateCriterion(i,field,value){rubricCriteria[i][field]=value;}
+        function addCriterion(){
+            const n=document.getElementById('newCritName').value.trim(),d=document.getElementById('newCritDesc').value.trim();
+            if(!n)return;
+            rubricCriteria.push({name:n,description:d});
+            document.getElementById('newCritName').value='';document.getElementById('newCritDesc').value='';renderCriteriaList();
+        }
+        function removeCriterion(i){rubricCriteria.splice(i,1);renderCriteriaList();}
+
+        function suggestCriteria(){
+            const desc=document.getElementById('rubricDescribe').value.trim();
+            if(!desc){showToast('Describe what you want to assess');return;}
+            const status=document.getElementById('rubricGenStatus');
+            status.innerHTML='<span class="spinner"></span> AI is suggesting criteria...';
+            document.getElementById('suggestBtn').disabled=true;
+            fetch('/api/rubrics/suggest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:desc})}).then(r=>r.json()).then(res=>{
+                document.getElementById('suggestBtn').disabled=false;
+                if(res.error){status.innerHTML='<span style="color:#d13438;">'+escapeHtml(res.error)+'</span>';return;}
+                const s=res.suggestion;
+                if(s.name&&!document.getElementById('rubricName').value)document.getElementById('rubricName').value=s.name;
+                // Append suggested criteria (don't replace existing ones)
+                if(s.criteria&&s.criteria.length){
+                    for(const c of s.criteria)rubricCriteria.push({name:c.name,description:c.description});
+                    renderCriteriaList();
+                }
+                status.innerHTML='<span style="color:#107c10;">'+s.criteria.length+' criteria suggested. Edit them below, then save.</span>';
+            }).catch(e=>{document.getElementById('suggestBtn').disabled=false;status.innerHTML='<span style="color:#d13438;">Error: '+escapeHtml(String(e))+'</span>';});
+        }
+
+        function generateRubricFromFile(){
+            const f=document.getElementById('rubricFile').files[0];if(!f){showToast('Select a file first');return;}
+            const status=document.getElementById('rubricGenStatus');status.innerHTML='<span class="spinner"></span> Generating rubric with AI...';
+            const fd=new FormData();fd.append('file',f);
+            fetch('/api/rubrics/generate',{method:'POST',body:fd}).then(r=>r.json()).then(res=>{
+                if(res.error){status.innerHTML='<span style="color:#d13438;">'+escapeHtml(res.error)+'</span>';return;}
+                const rb=res.rubric;
+                if(rb.name&&!document.getElementById('rubricName').value)document.getElementById('rubricName').value=rb.name;
+                if(rb.criteria)for(const c of rb.criteria)rubricCriteria.push({name:c.name,description:c.description});
+                renderCriteriaList();
+                status.innerHTML='<span style="color:#107c10;">Rubric generated! Edit criteria below, then save.</span>';
+            }).catch(e=>status.innerHTML='<span style="color:#d13438;">Error: '+escapeHtml(String(e))+'</span>');
+        }
+        function saveRubric(){
+            const name=document.getElementById('rubricName').value.trim();
+            if(!name||!rubricCriteria.length){showToast('Add a name and at least one criterion');return;}
+            if(editingRubricId){
+                // Update existing rubric
+                fetch('/api/rubrics/'+editingRubricId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria:rubricCriteria})}).then(r=>r.json()).then(()=>{
+                    showToast('Rubric updated');loadSavedRubrics();resetRubricEditor();
+                });
+            }else{
+                // Create new
+                fetch('/api/rubrics',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,criteria:rubricCriteria})}).then(r=>r.json()).then(()=>{
+                    showToast('Rubric saved');loadSavedRubrics();resetRubricEditor();
+                });
+            }
+        }
+
+        // --- Assessment Modal ---
+        function openAssessModal(){
+            if(!llmConnected){showToast('Connect an LLM in Settings first');return;}
+            // Check player data exists
+            fetch('/api/player-stats').then(r=>r.json()).then(stats=>{
+                const hasData = Object.keys(stats).length > 0;
+                if(!hasData && !players.length){showToast('No player data available. Players must connect and generate activity first.');return;}
+                document.getElementById('assessStatus').innerHTML='';
+                // Load rubrics
+                fetch('/api/rubrics').then(r=>r.json()).then(rubrics=>{
+                    if(!rubrics.length){showToast('Add a rubric first');return;}
+                    const sel=document.getElementById('assessRubricSelect');
+                    sel.innerHTML='<option value="">-- Select a rubric --</option>'+rubrics.map(r=>'<option value="'+r.id+'">'+escapeHtml(r.name)+' ('+r.criteria.length+' criteria)</option>').join('');
+                });
+                // Show players with stats data (connected or previously connected)
+                const pl=document.getElementById('assessPlayerList');
+                const allNames = new Set([...players.map(p=>p.name), ...Object.keys(stats)]);
+                if(!allNames.size){pl.innerHTML='<span style="color:#a19f9d;font-size:13px;">No player data available</span>';
+                }else{
+                    pl.innerHTML=Array.from(allNames).map(n=>{
+                        const s=stats[n];
+                        const events=s?s.events_total||0:0;
+                        const suffix=events?' ('+events+' events)':' (no data)';
+                        return '<label class="player-check"><input type="checkbox" value="'+escapeHtml(n)+'"'+(events?' checked':'')+''+(events?'':' disabled')+'> '+escapeHtml(n)+' <span style="color:#a19f9d;font-size:11px;">'+suffix+'</span></label>';
+                    }).join('');
+                }
+                document.getElementById('assessModal').classList.add('open');
+            });
+        }
+        function runAssessment(){
+            const rubricId=document.getElementById('assessRubricSelect').value;
+            if(!rubricId){showToast('Select a rubric');return;}
+            const checks=document.querySelectorAll('#assessPlayerList input:checked');
+            const playerNames=Array.from(checks).map(c=>c.value);
+            if(!playerNames.length){showToast('Select at least one player');return;}
+            const status=document.getElementById('assessStatus');
+            status.innerHTML='<span class="spinner"></span> Running assessment with AI... This may take a moment.';
+            document.getElementById('runAssessBtn').disabled=true;
+            fetch('/api/assess',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rubric_id:rubricId,players:playerNames,player_logs:logData})}).then(r=>{
+                if(r.ok){
+                    r.blob().then(blob=>{
+                        const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;
+                        a.download='assessment-'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.docx';a.click();URL.revokeObjectURL(u);
+                        status.innerHTML='<span style="color:#107c10;">Assessment complete! Report downloaded.</span>';document.getElementById('runAssessBtn').disabled=false;
+                    });
+                }else{r.json().then(j=>{status.innerHTML='<span style="color:#d13438;">'+escapeHtml(j.error||'Assessment failed')+'</span>';document.getElementById('runAssessBtn').disabled=false;});}
+            }).catch(e=>{status.innerHTML='<span style="color:#d13438;">Error: '+escapeHtml(String(e))+'</span>';document.getElementById('runAssessBtn').disabled=false;});
+        }
+
+        // --- Game Controls Modal ---
+        function openGameCtrlModal(){
+            const sel=document.getElementById('gcTarget');
+            sel.innerHTML='<option value="@a">All Players (@a)</option>';
+            players.forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.name;sel.appendChild(o);});
+            document.getElementById('gcLog').innerHTML='';document.getElementById('gcCustomCmd').value='';
+            document.getElementById('gameCtrlModal').classList.add('open');
+        }
+        function getGcTarget(){
+            const v=document.getElementById('gcTarget').value;
+            return v==='@a'?'@a':'"'+v+'"';
+        }
+        function sendPreset(cmd){
+            const target=getGcTarget();
+            const finalCmd=cmd.replace(/@s/g,target);
+            socket.emit('game_command',{command:finalCmd,targets:target});
+            gcLogEntry('Sent: /'+finalCmd,'sent');
+        }
+        function sendCustomCommand(){
+            const cmd=document.getElementById('gcCustomCmd').value.trim();if(!cmd)return;
+            const target=getGcTarget();
+            const finalCmd=cmd.replace(/@s/g,target);
+            socket.emit('game_command',{command:finalCmd,targets:target});
+            gcLogEntry('Sent: /'+finalCmd,'sent');document.getElementById('gcCustomCmd').value='';
+        }
+        function gcLogEntry(msg,cls){
+            const log=document.getElementById('gcLog');
+            const el=document.createElement('div');el.className='gc-log-entry '+(cls||'');el.textContent=msg;log.appendChild(el);log.scrollTop=log.scrollHeight;
+        }
+        socket.on('command_result',function(data){
+            if(!data.success)gcLogEntry('Error: '+(data.error||'Failed'),'error');
+        });
+        // Enter key for custom command
+        document.addEventListener('DOMContentLoaded',()=>{
+            document.getElementById('gcCustomCmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendCustomCommand();});
+        });
+
+        // --- 2D Player Map ---
+        const canvas=document.getElementById('playerMap'),ctx=canvas.getContext('2d');
+        let mapZoom=1,mapOffsetX=0,mapOffsetZ=0;
+        const PLAYER_COLORS=['#0078d4','#107c10','#ca5010','#8764b8','#d13438','#00b7c3','#e3008c','#4f6bed','#498205','#c239b3','#da3b01','#0099bc'];
+        const playerColorMap={};let colorIndex=0;
+        function getPlayerColor(n){if(!playerColorMap[n]){playerColorMap[n]=PLAYER_COLORS[colorIndex%PLAYER_COLORS.length];colorIndex++;}return playerColorMap[n];}
+        function resizeCanvas(){const c=canvas.parentElement;canvas.width=c.clientWidth;canvas.height=c.clientHeight;drawMap();}
+        function drawMap(){
+            const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);
+            const cx=w/2,cz=h/2,bs=Math.min(w,h)/256,sc=bs*mapZoom,gs=16*sc;
+            ctx.strokeStyle='#edebe9';ctx.lineWidth=0.5;const ox=mapOffsetX*sc,oz=mapOffsetZ*sc;
+            for(let gx=cx+ox-Math.ceil((cx+ox)/gs)*gs;gx<w;gx+=gs){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
+            for(let gz=cz+oz-Math.ceil((cz+oz)/gs)*gs;gz<h;gz+=gs){ctx.beginPath();ctx.moveTo(0,gz);ctx.lineTo(w,gz);ctx.stroke();}
+            ctx.strokeStyle='#c8c6c4';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx+ox,0);ctx.lineTo(cx+ox,h);ctx.moveTo(0,cz+oz);ctx.lineTo(w,cz+oz);ctx.stroke();
+            ctx.fillStyle='#a19f9d';ctx.font='10px monospace';ctx.fillText('0, 0',cx+ox+4,cz+oz-4);
+            if(!players.length){ctx.fillStyle='#a19f9d';ctx.font='14px Segoe UI,system-ui';ctx.textAlign='center';ctx.fillText('No players connected',cx,cz);ctx.textAlign='left';return;}
+            let ax=0,az=0;players.forEach(p=>{ax+=p.x;az+=p.z;});ax/=players.length;az/=players.length;
+
+            // Draw fading trace paths (last 60 seconds)
+            if(showTracePaths){
+                const now=Date.now()/1000;
+                const TRAIL_WINDOW=60; // seconds
+                players.forEach(p=>{
+                    const trail=playerTrails[p.name];
+                    if(!trail||trail.length<2)return;
+                    const col=getPlayerColor(p.name);
+                    // Filter to last 60s
+                    const recent=trail.filter(pt=>now-pt[0]<TRAIL_WINDOW);
+                    if(recent.length<2)return;
+                    for(let i=1;i<recent.length;i++){
+                        const age=(now-recent[i][0])/TRAIL_WINDOW; // 0=newest, 1=oldest
+                        const alpha=Math.max(0,1-age)*0.6;
+                        const x1=cx+(recent[i-1][1]-ax)*sc+ox, z1=cz+(recent[i-1][3]-az)*sc+oz;
+                        const x2=cx+(recent[i][1]-ax)*sc+ox, z2=cz+(recent[i][3]-az)*sc+oz;
+                        ctx.beginPath();ctx.moveTo(x1,z1);ctx.lineTo(x2,z2);
+                        ctx.strokeStyle=col;ctx.globalAlpha=alpha;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();
+                    }
+                    ctx.globalAlpha=1;
+                });
+            }
+
+            // Draw players
+            players.forEach(p=>{
+                const px=cx+(p.x-ax)*sc+ox,pz=cz+(p.z-az)*sc+oz,col=getPlayerColor(p.name);
+                ctx.beginPath();ctx.arc(px,pz,6,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();
+                ctx.beginPath();ctx.arc(px,pz,10,0,Math.PI*2);ctx.strokeStyle=col+'55';ctx.lineWidth=2;ctx.stroke();
+                ctx.fillStyle='#323130';ctx.font='bold 11px Segoe UI,system-ui';ctx.textAlign='center';ctx.fillText(p.name,px,pz-14);
+                ctx.fillStyle='#a19f9d';ctx.font='10px Cascadia Code,Consolas,monospace';ctx.fillText(p.x+', '+p.y+', '+p.z,px,pz+20);ctx.textAlign='left';
+            });
+        }
+        canvas.addEventListener('wheel',e=>{e.preventDefault();mapZoom=Math.max(0.1,Math.min(20,mapZoom*(e.deltaY>0?0.9:1.1)));drawMap();});
+
+        // Drag to pan
+        let isDragging=false, dragStartX=0, dragStartZ=0, dragOrigOX=0, dragOrigOZ=0;
+        canvas.addEventListener('mousedown',e=>{isDragging=true;dragStartX=e.clientX;dragStartZ=e.clientY;dragOrigOX=mapOffsetX;dragOrigOZ=mapOffsetZ;canvas.style.cursor='grabbing';});
+        window.addEventListener('mousemove',e=>{
+            if(!isDragging)return;
+            const bs=Math.min(canvas.width,canvas.height)/256, sc=bs*mapZoom;
+            mapOffsetX=dragOrigOX+(e.clientX-dragStartX)/sc;
+            mapOffsetZ=dragOrigOZ+(e.clientY-dragStartZ)/sc;
+            drawMap();
+        });
+        window.addEventListener('mouseup',()=>{if(isDragging){isDragging=false;canvas.style.cursor='grab';}});
+        canvas.style.cursor='grab';
+        window.addEventListener('resize',resizeCanvas);resizeCanvas();
+
+        // --- Socket Events ---
+        socket.on('server_status',data=>updateUI(data.running));
+        socket.on('log',entry=>addLog(entry));
+        socket.on('players_update',data=>{
+            players=data;document.getElementById('playerCount').textContent=players.length+' player'+(players.length!==1?'s':'')+' connected';drawMap();
+        });
+        socket.on('player_stats_update',data=>{
+            // Extract position trails for the map
+            for(const[name,s] of Object.entries(data)){
+                if(s.position_trail&&s.position_trail.length){
+                    playerTrails[name]=s.position_trail; // [(t, x, y, z), ...]
+                }
+            }
+        });
+        socket.on('player_joined',data=>addLog({timestamp:new Date().toLocaleTimeString(),message:data.name+' connected',level:'success'}));
+        socket.on('player_left',data=>addLog({timestamp:new Date().toLocaleTimeString(),message:data.name+' disconnected',level:'warn'}));
+        setInterval(drawMap,1000);
+    </script>
+</body>
+</html>
