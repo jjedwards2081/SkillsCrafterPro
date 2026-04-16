@@ -77,14 +77,14 @@ def _get_llm_client():
     return None, None, None
 
 
-def _llm_chat(prompt, system=None):
+def _llm_chat(prompt, system=None, max_tokens=2048):
     """Send a chat message to the configured LLM. Returns the response text."""
     client, provider, model = _get_llm_client()
     if not client:
         raise ValueError("No LLM configured")
 
     if provider == "anthropic":
-        kwargs = {"model": model, "max_tokens": 4096,
+        kwargs = {"model": model, "max_tokens": max_tokens,
                   "messages": [{"role": "user", "content": prompt}]}
         if system:
             kwargs["system"] = system
@@ -95,7 +95,8 @@ def _llm_chat(prompt, system=None):
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        resp = client.chat.completions.create(model=model, messages=messages)
+        resp = client.chat.completions.create(model=model, messages=messages,
+                                               max_tokens=max_tokens)
         return resp.choices[0].message.content
 
 
@@ -348,11 +349,13 @@ def get_player_stats():
     return jsonify(stats)
 
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
 def _make_movement_graph(player_name, trail):
     """Generate a 2D movement graph (XZ plane) and return as bytes."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(1, 1, figsize=(5, 4))
     if not trail:
@@ -388,122 +391,122 @@ def _format_duration(seconds):
     return f"{m}m {s}s"
 
 
+def _build_player_summary(name, stats):
+    """Build a compact data summary for one player."""
+    s = stats.get(name, {})
+    duration = s.get("time_connected_seconds", 0)
+    # Top 5 block types only
+    bp = dict(sorted(s.get("blocks_placed_types", {}).items(), key=lambda x: -x[1])[:5])
+    bb = dict(sorted(s.get("blocks_broken_types", {}).items(), key=lambda x: -x[1])[:5])
+    return {
+        "time": _format_duration(duration),
+        "distance": round(s.get("distance_travelled", 0), 1),
+        "blocks_placed": s.get("blocks_placed", 0),
+        "blocks_broken": s.get("blocks_broken", 0),
+        "top_placed": bp,
+        "top_broken": bb,
+        "items_acquired": s.get("items_acquired", 0),
+        "items_used": s.get("items_used", 0),
+        "mobs_killed": s.get("mobs_killed", 0),
+        "messages": s.get("messages_sent", 0),
+        "chat": [m["text"] for m in s.get("messages", [])[-10:]],
+        "events": s.get("events_total", 0),
+    }
+
+
+def _assess_one_player(name, summary, criteria_text, rubric_name):
+    """Call the LLM to assess a single player. Returns parsed dict."""
+    prompt = (
+        f"Assess Minecraft Education player \"{name}\" against this rubric.\n\n"
+        f"RUBRIC: {rubric_name}\nCRITERIA:\n{criteria_text}\n\n"
+        f"PLAYER DATA: {json.dumps(summary)}\n\n"
+        f"INSTRUCTIONS: No grades/scores. For each criterion give a brief observation "
+        f"citing specific data. Set sufficient_data=false if data is lacking. "
+        f"End with a short synoptic assessment.\n\n"
+        f"Return ONLY JSON: {{\"criteria_assessments\": [{{\"criterion\": \"...\", "
+        f"\"observation\": \"...\", \"sufficient_data\": true/false}}], "
+        f"\"synoptic_assessment\": \"...\"}}"
+    )
+    result = _llm_chat(prompt,
+                        system="Education assessment expert. Return ONLY valid JSON. No grades.",
+                        max_tokens=1024)
+    start = result.find("{")
+    end = result.rfind("}") + 1
+    return json.loads(result[start:end])
+
+
 @app.route("/api/assess", methods=["POST"])
 def run_assessment():
     """Assess selected players against a rubric using the LLM, return Word doc."""
     data = request.get_json()
     rubric_id = data.get("rubric_id")
     player_names = data.get("players", [])
-    player_logs = data.get("player_logs", [])
 
     rubrics = load_rubrics()
     rubric = next((r for r in rubrics if r["id"] == rubric_id), None)
     if not rubric:
         return jsonify({"error": "Rubric not found"}), 404
 
-    # Gather real player stats from the server
     all_stats = mc_server.get_player_stats()
     selected_stats = {n: all_stats[n] for n in player_names if n in all_stats}
 
     if not selected_stats:
         return jsonify({"error": "No player data available. Players must connect and generate activity before an assessment can be run."}), 400
 
-    # Determine LLM model name for the report
     settings = load_settings()
     provider = settings.get("llm_provider", "unknown")
     _, _, model_name = _get_llm_client()
     model_label = f"{provider.upper()} / {model_name}" if model_name else "Unknown"
     assessment_time = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Build a data summary per player for the LLM
-    player_summaries = {}
-    for name, s in selected_stats.items():
-        duration = s.get("time_connected_seconds", 0)
-        player_summaries[name] = {
-            "time_connected": _format_duration(duration),
-            "blocks_placed": s.get("blocks_placed", 0),
-            "blocks_placed_types": s.get("blocks_placed_types", {}),
-            "blocks_broken": s.get("blocks_broken", 0),
-            "blocks_broken_types": s.get("blocks_broken_types", {}),
-            "items_acquired": s.get("items_acquired", 0),
-            "mobs_killed": s.get("mobs_killed", 0),
-            "messages_sent": s.get("messages_sent", 0),
-            "messages": s.get("messages", [])[-20:],
-            "distance_travelled": round(s.get("distance_travelled", 0), 1),
-            "events_total": s.get("events_total", 0),
-            "items_used": s.get("items_used", 0),
-            "position_trail_length": len(s.get("position_trail", [])),
-        }
-
     criteria_text = "\n".join(
         f"- {c['name']}: {c['description']}" for c in rubric.get("criteria", [])
     )
 
-    prompt = (
-        f"You are assessing Minecraft Education players based on observed in-game activity data.\n\n"
-        f"RUBRIC: {rubric['name']}\n"
-        f"CRITERIA:\n{criteria_text}\n\n"
-        f"PLAYER DATA:\n{json.dumps(player_summaries, indent=2)}\n\n"
-        f"RECENT EVENT LOG (last entries):\n{json.dumps(player_logs[-150:], indent=1)}\n\n"
-        f"INSTRUCTIONS:\n"
-        f"- Do NOT assign grades or scores. This is a qualitative, descriptive assessment.\n"
-        f"- For EACH player, assess EACH criterion INDEPENDENTLY with observations and evidence from the data.\n"
-        f"- If there is INSUFFICIENT data to reasonably assess a criterion, explicitly state this "
-        f"and explain what data would be needed.\n"
-        f"- After all individual criteria, provide a SYNOPTIC ASSESSMENT that considers the player's "
-        f"activity holistically across all criteria.\n"
-        f"- Be specific - reference actual numbers, actions, and behaviours from the data.\n\n"
-        f"Return ONLY valid JSON with this structure:\n"
-        f'{{"assessments": [{{"player": "name", '
-        f'"criteria_assessments": [{{"criterion": "name", "observation": "detailed assessment or insufficient data note", '
-        f'"sufficient_data": true/false}}], '
-        f'"synoptic_assessment": "holistic assessment across all criteria"}}]}}'
-    )
-
-    try:
-        system = "You are an education assessment expert. Return ONLY valid JSON. Do not assign grades or scores."
-        result = _llm_chat(prompt, system=system)
-        start = result.find("{")
-        end = result.rfind("}") + 1
-        assessment = json.loads(result[start:end])
-    except Exception as e:
-        return jsonify({"error": f"LLM assessment failed: {str(e)[:200]}"}), 500
+    # Assess each player individually (faster, smaller prompts)
+    assessments = []
+    player_summaries = {}
+    for name in player_names:
+        if name not in selected_stats:
+            continue
+        summary = _build_player_summary(name, selected_stats)
+        player_summaries[name] = summary
+        try:
+            result = _assess_one_player(name, summary, criteria_text, rubric["name"])
+            result["player"] = name
+            assessments.append(result)
+        except Exception as e:
+            assessments.append({
+                "player": name,
+                "criteria_assessments": [{"criterion": "Error", "observation": str(e)[:200], "sufficient_data": False}],
+                "synoptic_assessment": f"Assessment could not be completed: {str(e)[:100]}"
+            })
 
     # ── Generate Word document ──
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    # Title page info
-    title = doc.add_heading("Skills Crafter Assessment Report", level=0)
+    doc.add_heading("Skills Crafter Assessment Report", level=0)
     doc.add_paragraph("")
 
-    # Metadata table
     meta_table = doc.add_table(rows=5, cols=2)
     meta_table.style = "Light List Accent 1"
-    meta_data = [
+    for i, (label, val) in enumerate([
         ("Date & Time", assessment_time),
         ("AI Model", model_label),
         ("Rubric", rubric["name"]),
         ("Players Assessed", ", ".join(player_names)),
         ("Criteria Count", str(len(rubric.get("criteria", [])))),
-    ]
-    for i, (label, val) in enumerate(meta_data):
+    ]):
         meta_table.rows[i].cells[0].text = label
         meta_table.rows[i].cells[1].text = val
-        for cell in meta_table.rows[i].cells:
-            for paragraph in cell.paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = Pt(10)
 
     doc.add_paragraph("")
-
-    # Rubric description
     doc.add_heading("Rubric Criteria", level=1)
     for c in rubric.get("criteria", []):
         p = doc.add_paragraph()
@@ -512,51 +515,39 @@ def run_assessment():
         p.add_run(c.get("description", ""))
     doc.add_paragraph("")
 
-    # Per-player sections
-    for entry in assessment.get("assessments", []):
+    for entry in assessments:
         pname = entry.get("player", "Unknown")
-        doc.add_heading(f"Player: {pname}", level=1)
-
         ps = player_summaries.get(pname, {})
         ss = selected_stats.get(pname, {})
 
-        # Activity statistics table
+        doc.add_heading(f"Player: {pname}", level=1)
+
+        # Activity summary
         doc.add_heading("Activity Summary", level=2)
         stat_table = doc.add_table(rows=1, cols=2)
         stat_table.style = "Light List Accent 1"
         stat_table.rows[0].cells[0].text = "Metric"
         stat_table.rows[0].cells[1].text = "Value"
-        stat_rows = [
-            ("Time Connected", ps.get("time_connected", "N/A")),
-            ("Distance Travelled", f"{ps.get('distance_travelled', 0)} blocks"),
+        for label, val in [
+            ("Time Connected", ps.get("time", "N/A")),
+            ("Distance Travelled", f"{ps.get('distance', 0)} blocks"),
             ("Blocks Placed", str(ps.get("blocks_placed", 0))),
             ("Blocks Broken", str(ps.get("blocks_broken", 0))),
             ("Items Acquired", str(ps.get("items_acquired", 0))),
-            ("Items Used", str(ps.get("items_used", 0))),
             ("Mobs Killed", str(ps.get("mobs_killed", 0))),
-            ("Chat Messages", str(ps.get("messages_sent", 0))),
-            ("Total Events", str(ps.get("events_total", 0))),
-        ]
-        for label, val in stat_rows:
+            ("Chat Messages", str(ps.get("messages", 0))),
+            ("Total Events", str(ps.get("events", 0))),
+        ]:
             row = stat_table.add_row()
             row.cells[0].text = label
             row.cells[1].text = val
 
-        # Block type breakdown if any
-        bp_types = ps.get("blocks_placed_types", {})
-        if bp_types:
-            doc.add_paragraph("")
+        bp = ps.get("top_placed", {})
+        if bp:
             p = doc.add_paragraph()
-            run = p.add_run("Blocks Placed Breakdown: ")
+            run = p.add_run("Top Blocks Placed: ")
             run.bold = True
-            p.add_run(", ".join(f"{b} ({c})" for b, c in sorted(bp_types.items(), key=lambda x: -x[1])[:10]))
-
-        bb_types = ss.get("blocks_broken_types", {})
-        if bb_types:
-            p = doc.add_paragraph()
-            run = p.add_run("Blocks Broken Breakdown: ")
-            run.bold = True
-            p.add_run(", ".join(f"{b} ({c})" for b, c in sorted(bb_types.items(), key=lambda x: -x[1])[:10]))
+            p.add_run(", ".join(f"{b} ({c})" for b, c in bp.items()))
 
         doc.add_paragraph("")
 
@@ -567,29 +558,23 @@ def run_assessment():
         doc.add_picture(graph_buf, width=Inches(4.5))
         doc.add_paragraph("")
 
-        # Per-criterion assessments
+        # Criterion assessments
         doc.add_heading("Criterion Assessments", level=2)
         for ca in entry.get("criteria_assessments", []):
             p = doc.add_paragraph()
             run = p.add_run(ca.get("criterion", "") + ": ")
             run.bold = True
-            run.font.size = Pt(11)
-
             if not ca.get("sufficient_data", True):
                 warn = p.add_run("[INSUFFICIENT DATA] ")
                 warn.bold = True
                 warn.font.color.rgb = RGBColor(0xD1, 0x34, 0x38)
-
             p.add_run(ca.get("observation", ""))
 
         doc.add_paragraph("")
-
-        # Synoptic assessment
         doc.add_heading("Synoptic Assessment", level=2)
         doc.add_paragraph(entry.get("synoptic_assessment", "No synoptic assessment available."))
         doc.add_page_break()
 
-    # Footer note
     p = doc.add_paragraph()
     run = p.add_run(f"Report generated by Skills Crafter on {assessment_time} using {model_label}. "
                      "This is an AI-assisted qualitative assessment based on observed in-game activity data. "

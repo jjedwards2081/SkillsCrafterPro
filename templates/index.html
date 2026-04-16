@@ -717,7 +717,7 @@
             const status=document.getElementById('assessStatus');
             status.innerHTML='<span class="spinner"></span> Running assessment with AI... This may take a moment.';
             document.getElementById('runAssessBtn').disabled=true;
-            fetch('/api/assess',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rubric_id:rubricId,players:playerNames,player_logs:logData})}).then(r=>{
+            fetch('/api/assess',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rubric_id:rubricId,players:playerNames})}).then(r=>{
                 if(r.ok){
                     r.blob().then(blob=>{
                         const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;
