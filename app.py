@@ -77,26 +77,41 @@ def _get_llm_client():
     return None, None, None
 
 
-def _llm_chat(prompt, system=None, max_tokens=2048):
+def _llm_chat(prompt, system=None, max_tokens=2048, timeout=45):
     """Send a chat message to the configured LLM. Returns the response text."""
+    import sys
     client, provider, model = _get_llm_client()
     if not client:
-        raise ValueError("No LLM configured")
+        raise ValueError("No LLM configured — add an API key in Settings")
 
-    if provider == "anthropic":
-        kwargs = {"model": model, "max_tokens": max_tokens,
-                  "messages": [{"role": "user", "content": prompt}]}
-        if system:
-            kwargs["system"] = system
-        resp = client.messages.create(**kwargs)
-        return resp.content[0].text
-    else:
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        resp = client.chat.completions.create(model=model, messages=messages,
-                                               max_tokens=max_tokens)
+    print(f"[LLM] Calling {provider}/{model} max_tokens={max_tokens}...", flush=True)
+    t0 = time.time()
+
+    try:
+        if provider == "anthropic":
+            kwargs = {"model": model, "max_tokens": max_tokens, "timeout": timeout,
+                      "messages": [{"role": "user", "content": prompt}]}
+            if system:
+                kwargs["system"] = system
+            resp = client.messages.create(**kwargs)
+            text = resp.content[0].text
+        else:
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
+            resp = client.chat.completions.create(model=model, messages=messages,
+                                                   max_tokens=max_tokens, timeout=timeout)
+            text = resp.choices[0].message.content
+
+        elapsed = round(time.time() - t0, 1)
+        print(f"[LLM] Response received in {elapsed}s ({len(text)} chars)", flush=True)
+        return text
+
+    except Exception as e:
+        elapsed = round(time.time() - t0, 1)
+        print(f"[LLM] FAILED after {elapsed}s: {e}", file=sys.stderr, flush=True)
+        raise
         return resp.choices[0].message.content
 
 
@@ -476,11 +491,16 @@ def run_assessment():
 
     settings = load_settings()
     provider = settings.get("llm_provider", "unknown")
+    api_key = settings.get("llm_api_key", "")
+    if not provider or not api_key:
+        return jsonify({"error": "No LLM API key configured. Add one in Settings."}), 400
+
     detail_level = settings.get("report_detail_level", 3)
     _, _, model_name = _get_llm_client()
     model_label = f"{provider.upper()} / {model_name}" if model_name else "Unknown"
     assessment_time = time.strftime("%Y-%m-%d %H:%M:%S")
     detail_labels = {1: "Minimal", 2: "Brief", 3: "Standard", 4: "Detailed", 5: "Comprehensive"}
+    print(f"[ASSESS] Starting: {len(player_names)} players, rubric={rubric['name']}, detail={detail_level}", flush=True)
 
     criteria_text = "\n".join(
         f"- {c['name']}: {c['description']}" for c in rubric.get("criteria", [])
@@ -489,16 +509,19 @@ def run_assessment():
     # Assess each player individually (faster, smaller prompts)
     assessments = []
     player_summaries = {}
-    for name in player_names:
+    for idx, name in enumerate(player_names):
         if name not in selected_stats:
             continue
+        print(f"[ASSESS] Player {idx+1}/{len(player_names)}: {name}", flush=True)
         summary = _build_player_summary(name, selected_stats)
         player_summaries[name] = summary
         try:
             result = _assess_one_player(name, summary, criteria_text, rubric["name"], detail_level)
             result["player"] = name
             assessments.append(result)
+            print(f"[ASSESS] Player {name}: OK", flush=True)
         except Exception as e:
+            print(f"[ASSESS] Player {name}: FAILED - {e}", flush=True)
             assessments.append({
                 "player": name,
                 "criteria_assessments": [{"criterion": "Error", "observation": str(e)[:200], "sufficient_data": False}],
