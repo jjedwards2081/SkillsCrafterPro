@@ -440,6 +440,22 @@
         function showToast(msg, dur) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), dur || 2500); }
         function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
+        // --- Clipboard fallback for HTTP ---
+        function copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text);
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+        }
+
         // --- Server Controls ---
         function toggleServer(on) {
             if (on) socket.emit('start_server');
@@ -451,7 +467,7 @@
             document.getElementById('statusLabel').textContent = running ? 'Server On' : 'Server Off';
         }
         function copyConnect() {
-            navigator.clipboard.writeText('/connect ' + document.getElementById('connectAddr').textContent);
+            copyToClipboard('/connect ' + document.getElementById('connectAddr').textContent);
             const btn = event.target; btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
         }
 

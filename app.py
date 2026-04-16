@@ -27,11 +27,22 @@ mc_server = MinecraftWSServer(socketio=socketio)
 
 
 def get_public_host():
-    """Get the public hostname/IP for display in the connect string.
-    Uses EXTERNAL_HOST env var when deployed, falls back to local IP."""
-    ext = os.environ.get("EXTERNAL_HOST")
+    """Get the public IP for display in the connect string.
+    Uses EXTERNAL_HOST env var. If it's a hostname, resolves it to an IP.
+    Falls back to local IP for development."""
+    ext = os.environ.get("EXTERNAL_HOST", "").strip()
     if ext:
-        return ext
+        # If it's already an IP, return as-is
+        try:
+            socket.inet_aton(ext)
+            return ext
+        except socket.error:
+            pass
+        # It's a hostname — resolve to IP for Minecraft
+        try:
+            return socket.gethostbyname(ext)
+        except socket.gaierror:
+            return ext
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
