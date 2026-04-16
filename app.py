@@ -7,6 +7,7 @@ displays player activity logs, and shows a real-time 2D map of player positions.
 
 import io
 import json
+import os
 import socket
 import time
 import uuid
@@ -25,8 +26,12 @@ socketio = SocketIO(app, async_mode="threading", cors_allowed_origins="*")
 mc_server = MinecraftWSServer(socketio=socketio)
 
 
-def get_local_ip():
-    """Get the local network IP address for display."""
+def get_public_host():
+    """Get the public hostname/IP for display in the connect string.
+    Uses EXTERNAL_HOST env var when deployed, falls back to local IP."""
+    ext = os.environ.get("EXTERNAL_HOST")
+    if ext:
+        return ext
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -87,7 +92,7 @@ def _llm_chat(prompt, system=None):
 
 @app.route("/")
 def index():
-    local_ip = get_local_ip()
+    local_ip = get_public_host()
     settings = load_settings()
     return render_template(
         "index.html",
@@ -644,6 +649,6 @@ if __name__ == "__main__":
     print("  Skills Crafter - Minecraft Education Dashboard")
     print("=" * 50)
     print(f"  Open http://localhost:5050 in your browser")
-    print(f"  Local IP: {get_local_ip()}")
+    print(f"  Local IP: {get_public_host()}")
     print("=" * 50)
     socketio.run(app, host="0.0.0.0", port=5050, debug=False, allow_unsafe_werkzeug=True)
