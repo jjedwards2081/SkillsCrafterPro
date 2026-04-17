@@ -217,6 +217,11 @@
                 <div class="switch-track"></div>
                 <span class="switch-label" id="statusLabel">Server Off</span>
             </label>
+            <label class="server-switch" title="Toggle AI chat (@ai and @build in Minecraft)" id="chatSwitchLabel" style="opacity:0.4;pointer-events:none;">
+                <input type="checkbox" id="chatToggle" onchange="toggleChat(this.checked)">
+                <div class="switch-track"></div>
+                <span class="switch-label" id="chatLabel">Chat Off</span>
+            </label>
             <div class="llm-status" id="llmStatus" title="LLM not connected">
                 <div class="llm-dot" id="llmDot"></div>
                 <span class="llm-label" id="llmLabel">LLM</span>
@@ -374,6 +379,19 @@
         </div>
     </div>
 
+    <!-- Collaboration Graph Modal -->
+    <div class="modal-overlay" id="collabModal" onclick="if(event.target===this)closeModal('collabModal')">
+        <div class="modal-panel" style="width:700px;">
+            <div class="modal-header"><h2>Collaboration Graph</h2><button class="modal-close" onclick="closeModal('collabModal')">&#10005;</button></div>
+            <div class="modal-body">
+                <p style="font-size:12px;color:#605e5c;margin-bottom:12px;">Players within 15 blocks of each other are considered collaborating. Line thickness shows total time spent near each other. Isolated nodes indicate students working alone.</p>
+                <canvas id="collabCanvas" style="width:100%;height:400px;border:1px solid #edebe9;border-radius:4px;background:#faf9f8;"></canvas>
+                <div id="collabStats" style="margin-top:12px;"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-sm btn-secondary" onclick="closeModal('collabModal')">Close</button></div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <div class="main-layout">
@@ -419,19 +437,32 @@
                         <div class="ab-label">Game Controls</div>
                         <div class="ab-desc">Send commands to the Minecraft world</div>
                     </div>
+                    <div class="assess-btn" onclick="openCollabModal()">
+                        <div class="ab-icon">&#129309;</div>
+                        <div class="ab-label">Collaboration</div>
+                        <div class="ab-desc">See who works together</div>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div class="panel map-panel">
-            <div class="panel-header">&#127758; Player Map <span style="margin-left:auto;font-size:11px;color:#a19f9d;text-transform:none;letter-spacing:0;font-weight:400;">top-down XZ view</span></div>
-            <div class="panel-body" style="padding:8px;">
-                <div class="map-container"><canvas id="playerMap"></canvas><div class="map-legend">Grid = 16 blocks &middot; Scroll to zoom</div></div>
+            <div class="panel-header">&#127758; Player Map
+                <span style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+                    <select id="focusPlayer" onchange="focusOnPlayer(this.value)" style="font-size:11px;padding:2px 6px;border:1px solid #edebe9;border-radius:3px;background:#fff;color:#323130;text-transform:none;letter-spacing:0;font-weight:400;">
+                        <option value="">All Players</option>
+                    </select>
+                </span>
+            </div>
+            <div class="panel-body" style="padding:0;overflow:hidden;">
+                <div class="map-container" id="mapContainer" style="min-height:200px;"></div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
         const socket = io();
         let players = [];
@@ -471,14 +502,30 @@
         }
 
         // --- Server Controls ---
+        let chatEnabled = false;
+
         function toggleServer(on) {
             if (on) socket.emit('start_server');
-            else socket.emit('stop_server');
+            else { socket.emit('stop_server'); toggleChat(false); }
+        }
+        function toggleChat(on) {
+            chatEnabled = on;
+            document.getElementById('chatToggle').checked = on;
+            document.getElementById('chatLabel').textContent = on ? 'Chat On' : 'Chat Off';
+            socket.emit('set_chat', {enabled: on});
+        }
+        function updateChatSwitch() {
+            const canChat = serverRunning && llmConnected;
+            const el = document.getElementById('chatSwitchLabel');
+            el.style.opacity = canChat ? '1' : '0.4';
+            el.style.pointerEvents = canChat ? 'auto' : 'none';
+            if (!canChat && chatEnabled) toggleChat(false);
         }
         function updateUI(running) {
             serverRunning = running;
             document.getElementById('serverToggle').checked = running;
             document.getElementById('statusLabel').textContent = running ? 'Server On' : 'Server Off';
+            updateChatSwitch();
         }
         function copyConnect() {
             copyToClipboard('/connect ' + document.getElementById('connectAddr').textContent);
@@ -543,10 +590,10 @@
         function setLlmStatus(state,provider){
             const dot=document.getElementById('llmDot'),label=document.getElementById('llmLabel'),c=document.getElementById('llmStatus');
             dot.classList.remove('connected','error','testing');
-            if(state==='connected'){dot.classList.add('connected');label.textContent=provider?provider.toUpperCase():'LLM';c.title='LLM connected ('+provider+')';llmConnected=true;updateAssessBtns();}
+            if(state==='connected'){dot.classList.add('connected');label.textContent=provider?provider.toUpperCase():'LLM';c.title='LLM connected ('+provider+')';llmConnected=true;updateAssessBtns();updateChatSwitch();}
             else if(state==='testing'){dot.classList.add('testing');label.textContent='Testing...';c.title='Testing LLM connection...';}
-            else if(state==='error'){dot.classList.add('error');label.textContent='LLM';c.title='LLM connection failed';llmConnected=false;updateAssessBtns();}
-            else{label.textContent='LLM';c.title='LLM not connected';llmConnected=false;updateAssessBtns();}
+            else if(state==='error'){dot.classList.add('error');label.textContent='LLM';c.title='LLM connection failed';llmConnected=false;updateAssessBtns();updateChatSwitch();}
+            else{label.textContent='LLM';c.title='LLM not connected';llmConnected=false;updateAssessBtns();updateChatSwitch();}
         }
         function testLlmConnection(provider,apiKey,endpoint){
             setLlmStatus('testing');const body={};if(provider)body.provider=provider;if(apiKey)body.api_key=apiKey;if(endpoint)body.endpoint=endpoint;
@@ -807,77 +854,449 @@
             document.getElementById('gcCustomCmd').addEventListener('keydown',e=>{if(e.key==='Enter')sendCustomCommand();});
         });
 
-        // --- 2D Player Map ---
-        const canvas=document.getElementById('playerMap'),ctx=canvas.getContext('2d');
-        let mapZoom=1,mapOffsetX=0,mapOffsetZ=0;
+        // --- Collaboration Graph ---
+        let collabData = {pairs: [], totals: {}, players: []};
+
+        socket.on('proximity_update', data => { collabData = data; });
+
+        function openCollabModal() {
+            document.getElementById('collabModal').classList.add('open');
+            setTimeout(drawCollabGraph, 50);
+        }
+
+        function drawCollabGraph() {
+            const canvas = document.getElementById('collabCanvas');
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = 400;
+            const ctx2 = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+
+            ctx2.clearRect(0, 0, w, h);
+            ctx2.fillStyle = '#faf9f8';
+            ctx2.fillRect(0, 0, w, h);
+
+            const allPlayers = collabData.players || [];
+            if (allPlayers.length === 0) {
+                // Fall back to connected players
+                players.forEach(p => { if (!allPlayers.includes(p.name)) allPlayers.push(p.name); });
+            }
+            if (allPlayers.length === 0) {
+                ctx2.fillStyle = '#a19f9d';
+                ctx2.font = '14px Segoe UI, system-ui';
+                ctx2.textAlign = 'center';
+                ctx2.fillText('No players connected', w/2, h/2);
+                return;
+            }
+
+            const totals = collabData.totals || {};
+            const maxTime = Math.max(1, ...Object.values(totals));
+
+            // Layout: force-directed simple simulation
+            const nodes = {};
+            const cx = w / 2, cy = h / 2;
+            const radius = Math.min(w, h) * 0.35;
+            allPlayers.forEach((name, i) => {
+                const angle = (i / allPlayers.length) * Math.PI * 2 - Math.PI / 2;
+                nodes[name] = {
+                    x: cx + Math.cos(angle) * radius,
+                    y: cy + Math.sin(angle) * radius,
+                    name: name
+                };
+            });
+
+            // Simple force simulation (30 iterations)
+            const edges = [];
+            for (const [key, totalSec] of Object.entries(totals)) {
+                const [a, b] = key.split('|');
+                if (nodes[a] && nodes[b]) {
+                    edges.push({a, b, weight: totalSec});
+                }
+            }
+
+            for (let iter = 0; iter < 40; iter++) {
+                // Repulsion between all nodes
+                for (let i = 0; i < allPlayers.length; i++) {
+                    for (let j = i + 1; j < allPlayers.length; j++) {
+                        const na = nodes[allPlayers[i]], nb = nodes[allPlayers[j]];
+                        let dx = nb.x - na.x, dy = nb.y - na.y;
+                        let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+                        let force = 2000 / (dist * dist);
+                        na.x -= dx / dist * force;
+                        na.y -= dy / dist * force;
+                        nb.x += dx / dist * force;
+                        nb.y += dy / dist * force;
+                    }
+                }
+                // Attraction along edges (stronger for higher totals)
+                for (const e of edges) {
+                    const na = nodes[e.a], nb = nodes[e.b];
+                    let dx = nb.x - na.x, dy = nb.y - na.y;
+                    let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+                    let strength = 0.02 * (e.weight / maxTime);
+                    na.x += dx * strength;
+                    na.y += dy * strength;
+                    nb.x -= dx * strength;
+                    nb.y -= dy * strength;
+                }
+                // Center gravity
+                for (const n of Object.values(nodes)) {
+                    n.x += (cx - n.x) * 0.03;
+                    n.y += (cy - n.y) * 0.03;
+                    // Keep in bounds
+                    n.x = Math.max(40, Math.min(w - 40, n.x));
+                    n.y = Math.max(40, Math.min(h - 40, n.y));
+                }
+            }
+
+            // Draw edges
+            for (const e of edges) {
+                const na = nodes[e.a], nb = nodes[e.b];
+                const thickness = Math.max(1, (e.weight / maxTime) * 8);
+                const alpha = Math.min(1, 0.3 + (e.weight / maxTime) * 0.7);
+                ctx2.beginPath();
+                ctx2.moveTo(na.x, na.y);
+                ctx2.lineTo(nb.x, nb.y);
+                ctx2.strokeStyle = 'rgba(0, 120, 212, ' + alpha + ')';
+                ctx2.lineWidth = thickness;
+                ctx2.stroke();
+
+                // Time label on edge
+                const mx = (na.x + nb.x) / 2, my = (na.y + nb.y) / 2;
+                const mins = Math.floor(e.weight / 60);
+                const secs = Math.floor(e.weight % 60);
+                const label = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+                ctx2.fillStyle = '#605e5c';
+                ctx2.font = '10px Cascadia Code, Consolas, monospace';
+                ctx2.textAlign = 'center';
+                ctx2.fillText(label, mx, my - 4);
+            }
+
+            // Draw nodes
+            for (const n of Object.values(nodes)) {
+                const col = getPlayerColor(n.name);
+                // Check if this player has any connections
+                const connected = edges.some(e => e.a === n.name || e.b === n.name);
+
+                // Node circle
+                ctx2.beginPath();
+                ctx2.arc(n.x, n.y, connected ? 18 : 14, 0, Math.PI * 2);
+                ctx2.fillStyle = col;
+                ctx2.fill();
+
+                // Isolation indicator (dashed ring for solo players)
+                if (!connected) {
+                    ctx2.beginPath();
+                    ctx2.arc(n.x, n.y, 20, 0, Math.PI * 2);
+                    ctx2.setLineDash([4, 4]);
+                    ctx2.strokeStyle = '#a19f9d';
+                    ctx2.lineWidth = 1.5;
+                    ctx2.stroke();
+                    ctx2.setLineDash([]);
+                }
+
+                // White border
+                ctx2.beginPath();
+                ctx2.arc(n.x, n.y, connected ? 18 : 14, 0, Math.PI * 2);
+                ctx2.strokeStyle = '#ffffff';
+                ctx2.lineWidth = 2;
+                ctx2.stroke();
+
+                // Name
+                ctx2.fillStyle = '#323130';
+                ctx2.font = 'bold 12px Segoe UI, system-ui';
+                ctx2.textAlign = 'center';
+                ctx2.fillText(n.name, n.x, n.y + (connected ? 30 : 26));
+            }
+
+            // Stats table
+            const statsEl = document.getElementById('collabStats');
+            if (allPlayers.length > 1 && edges.length > 0) {
+                let html = '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+                html += '<tr style="background:#faf9f8;"><th style="text-align:left;padding:6px;border-bottom:1px solid #edebe9;">Player Pair</th><th style="text-align:right;padding:6px;border-bottom:1px solid #edebe9;">Time Near</th><th style="text-align:left;padding:6px;border-bottom:1px solid #edebe9;">Status</th></tr>';
+                const sorted = [...edges].sort((a, b) => b.weight - a.weight);
+                for (const e of sorted) {
+                    const mins = Math.floor(e.weight / 60);
+                    const secs = Math.floor(e.weight % 60);
+                    const timeStr = mins > 0 ? mins + 'm ' + secs + 's' : secs + 's';
+                    const status = e.weight > 120 ? '<span style="color:#107c10;">Strong collaboration</span>' :
+                                   e.weight > 30 ? '<span style="color:#ca5010;">Some interaction</span>' :
+                                   '<span style="color:#605e5c;">Brief contact</span>';
+                    html += '<tr><td style="padding:4px 6px;border-bottom:1px solid #f3f2f1;">' + escapeHtml(e.a) + ' & ' + escapeHtml(e.b) + '</td><td style="text-align:right;padding:4px 6px;border-bottom:1px solid #f3f2f1;">' + timeStr + '</td><td style="padding:4px 6px;border-bottom:1px solid #f3f2f1;">' + status + '</td></tr>';
+                }
+                // Solo players
+                for (const name of allPlayers) {
+                    if (!edges.some(e => e.a === name || e.b === name)) {
+                        html += '<tr><td style="padding:4px 6px;border-bottom:1px solid #f3f2f1;">' + escapeHtml(name) + '</td><td style="text-align:right;padding:4px 6px;border-bottom:1px solid #f3f2f1;">-</td><td style="padding:4px 6px;border-bottom:1px solid #f3f2f1;"><span style="color:#d13438;">Working alone</span></td></tr>';
+                    }
+                }
+                html += '</table>';
+                statsEl.innerHTML = html;
+            } else if (allPlayers.length === 1) {
+                statsEl.innerHTML = '<div style="color:#605e5c;font-size:12px;">Only one player connected. Collaboration data requires multiple players.</div>';
+            } else {
+                statsEl.innerHTML = '<div style="color:#605e5c;font-size:12px;">No proximity data yet. Players need to move near each other (within 15 blocks).</div>';
+            }
+        }
+
+        // Redraw when modal is open
+        setInterval(() => {
+            if (document.getElementById('collabModal').classList.contains('open')) drawCollabGraph();
+        }, 5000);
+
+        // --- 3D Player Map ---
         const PLAYER_COLORS=['#0078d4','#107c10','#ca5010','#8764b8','#d13438','#00b7c3','#e3008c','#4f6bed','#498205','#c239b3','#da3b01','#0099bc'];
         const playerColorMap={};let colorIndex=0;
         function getPlayerColor(n){if(!playerColorMap[n]){playerColorMap[n]=PLAYER_COLORS[colorIndex%PLAYER_COLORS.length];colorIndex++;}return playerColorMap[n];}
-        function resizeCanvas(){const c=canvas.parentElement;canvas.width=c.clientWidth;canvas.height=c.clientHeight;drawMap();}
-        function drawMap(){
-            const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#ffffff';ctx.fillRect(0,0,w,h);
-            const cx=w/2,cz=h/2,bs=Math.min(w,h)/256,sc=bs*mapZoom,gs=16*sc;
-            ctx.strokeStyle='#edebe9';ctx.lineWidth=0.5;const ox=mapOffsetX*sc,oz=mapOffsetZ*sc;
-            for(let gx=cx+ox-Math.ceil((cx+ox)/gs)*gs;gx<w;gx+=gs){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,h);ctx.stroke();}
-            for(let gz=cz+oz-Math.ceil((cz+oz)/gs)*gs;gz<h;gz+=gs){ctx.beginPath();ctx.moveTo(0,gz);ctx.lineTo(w,gz);ctx.stroke();}
-            ctx.strokeStyle='#c8c6c4';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx+ox,0);ctx.lineTo(cx+ox,h);ctx.moveTo(0,cz+oz);ctx.lineTo(w,cz+oz);ctx.stroke();
-            ctx.fillStyle='#a19f9d';ctx.font='10px monospace';ctx.fillText('0, 0',cx+ox+4,cz+oz-4);
-            if(!players.length){ctx.fillStyle='#a19f9d';ctx.font='14px Segoe UI,system-ui';ctx.textAlign='center';ctx.fillText('No players connected',cx,cz);ctx.textAlign='left';return;}
-            let ax=0,az=0;players.forEach(p=>{ax+=p.x;az+=p.z;});ax/=players.length;az/=players.length;
 
-            // Draw fading trace paths (last 60 seconds)
-            if(showTracePaths){
-                const now=Date.now()/1000;
-                const TRAIL_WINDOW=60; // seconds
-                players.forEach(p=>{
-                    const trail=playerTrails[p.name];
-                    if(!trail||trail.length<2)return;
-                    const col=getPlayerColor(p.name);
-                    // Filter to last 60s
-                    const recent=trail.filter(pt=>now-pt[0]<TRAIL_WINDOW);
-                    if(recent.length<2)return;
-                    for(let i=1;i<recent.length;i++){
-                        const age=(now-recent[i][0])/TRAIL_WINDOW; // 0=newest, 1=oldest
-                        const alpha=Math.max(0,1-age)*0.6;
-                        const x1=cx+(recent[i-1][1]-ax)*sc+ox, z1=cz+(recent[i-1][3]-az)*sc+oz;
-                        const x2=cx+(recent[i][1]-ax)*sc+ox, z2=cz+(recent[i][3]-az)*sc+oz;
-                        ctx.beginPath();ctx.moveTo(x1,z1);ctx.lineTo(x2,z2);
-                        ctx.strokeStyle=col;ctx.globalAlpha=alpha;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();
-                    }
-                    ctx.globalAlpha=1;
-                });
+        const mapContainer=document.getElementById('mapContainer');
+        let focusedPlayer = ''; // empty = all players
+        const scene=new THREE.Scene();
+        scene.background=new THREE.Color(0xf3f2f1);
+
+        const camera=new THREE.PerspectiveCamera(50,1,0.1,5000);
+        camera.position.set(0,120,120);
+        camera.lookAt(0,0,0);
+
+        const renderer=new THREE.WebGLRenderer({antialias:true});
+        mapContainer.appendChild(renderer.domElement);
+
+        const controls=new THREE.OrbitControls(camera,renderer.domElement);
+        controls.enableDamping=true;
+        controls.dampingFactor=0.1;
+        controls.maxPolarAngle=Math.PI/2.1;
+        controls.minDistance=20;
+        controls.maxDistance=500;
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff,0.6));
+        const dirLight=new THREE.DirectionalLight(0xffffff,0.8);
+        dirLight.position.set(50,100,50);
+        scene.add(dirLight);
+
+        // Ground grid
+        const gridHelper=new THREE.GridHelper(512,32,0xc8c6c4,0xedebe9);
+        scene.add(gridHelper);
+
+        // Origin axes
+        const axLen=30;
+        const axX=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.1,0),new THREE.Vector3(axLen,0.1,0)]),new THREE.LineBasicMaterial({color:0xd13438}));
+        const axZ=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.1,0),new THREE.Vector3(0,0.1,axLen)]),new THREE.LineBasicMaterial({color:0x0078d4}));
+        scene.add(axX,axZ);
+
+        // Player objects: {mesh, label, trailLine, trailPositions}
+        const playerObjects={};
+        const TRAIL_WINDOW=300; // 5 minutes
+
+        function getOrCreatePlayer(name){
+            if(playerObjects[name])return playerObjects[name];
+            const col=new THREE.Color(getPlayerColor(name));
+
+            // Body (capsule-like: cylinder + spheres)
+            const group=new THREE.Group();
+            const bodyMat=new THREE.MeshLambertMaterial({color:col});
+            const body=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,3,8),bodyMat);
+            body.position.y=1.5;
+            const head=new THREE.Mesh(new THREE.SphereGeometry(1.3,8,8),bodyMat);
+            head.position.y=3.8;
+            group.add(body,head);
+
+            // Glow ring on ground
+            const ringGeo=new THREE.RingGeometry(2,2.5,24);
+            ringGeo.rotateX(-Math.PI/2);
+            const ring=new THREE.Mesh(ringGeo,new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.5}));
+            ring.position.y=0.05;
+            group.add(ring);
+
+            scene.add(group);
+
+            // Name label (sprite)
+            const canvas2=document.createElement('canvas');
+            canvas2.width=256;canvas2.height=64;
+            const c2=canvas2.getContext('2d');
+            c2.font='bold 28px Segoe UI, system-ui, sans-serif';c2.textAlign='center';
+            c2.fillStyle='#323130';c2.fillText(name,128,36);
+            const tex=new THREE.CanvasTexture(canvas2);
+            const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true}));
+            sprite.scale.set(12,3,1);
+            sprite.position.y=7;
+            group.add(sprite);
+
+            // Coord label
+            const coordCanvas=document.createElement('canvas');
+            coordCanvas.width=256;coordCanvas.height=48;
+            const coordTex=new THREE.CanvasTexture(coordCanvas);
+            const coordSprite=new THREE.Sprite(new THREE.SpriteMaterial({map:coordTex,transparent:true}));
+            coordSprite.scale.set(10,2.5,1);
+            coordSprite.position.y=-1.5;
+            group.add(coordSprite);
+
+            // Trail line
+            const maxTrailPts=600;
+            const trailGeo=new THREE.BufferGeometry();
+            const trailPositions=new Float32Array(maxTrailPts*3);
+            const trailColors=new Float32Array(maxTrailPts*3);
+            trailGeo.setAttribute('position',new THREE.BufferAttribute(trailPositions,3));
+            trailGeo.setAttribute('color',new THREE.BufferAttribute(trailColors,3));
+            trailGeo.setDrawRange(0,0);
+            const trailLine=new THREE.Line(trailGeo,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:0.8}));
+            trailLine.frustumCulled=false;
+            scene.add(trailLine);
+
+            playerObjects[name]={group,coordCanvas,coordTex,coordSprite,trailLine,trailGeo,trailPositions,trailColors,maxTrailPts,color:col};
+            return playerObjects[name];
+        }
+
+        function updateCoordLabel(obj,x,y,z){
+            const c=obj.coordCanvas.getContext('2d');
+            c.clearRect(0,0,256,48);
+            c.font='20px Cascadia Code, Consolas, monospace';
+            c.textAlign='center';c.fillStyle='#605e5c';
+            c.fillText(x+', '+y+', '+z,128,30);
+            obj.coordTex.needsUpdate=true;
+        }
+
+        function focusOnPlayer(name) {
+            focusedPlayer = name;
+            if (!name) {
+                // Reset to default overview
+                controls.target.set(0, 0, 0);
+                camera.position.set(0, 120, 120);
+                return;
             }
+            // Find the player and animate camera to them
+            const p = players.find(pl => pl.name === name);
+            if (p) {
+                controls.target.set(p.x, p.y, p.z);
+                camera.position.set(p.x + 30, p.y + 40, p.z + 30);
+            }
+        }
 
-            // Draw players
-            players.forEach(p=>{
-                const px=cx+(p.x-ax)*sc+ox,pz=cz+(p.z-az)*sc+oz,col=getPlayerColor(p.name);
-                ctx.beginPath();ctx.arc(px,pz,6,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();
-                ctx.beginPath();ctx.arc(px,pz,10,0,Math.PI*2);ctx.strokeStyle=col+'55';ctx.lineWidth=2;ctx.stroke();
-                ctx.fillStyle='#323130';ctx.font='bold 11px Segoe UI,system-ui';ctx.textAlign='center';ctx.fillText(p.name,px,pz-14);
-                ctx.fillStyle='#a19f9d';ctx.font='10px Cascadia Code,Consolas,monospace';ctx.fillText(p.x+', '+p.y+', '+p.z,px,pz+20);ctx.textAlign='left';
+        function updateFocusDropdown() {
+            const sel = document.getElementById('focusPlayer');
+            const current = sel.value;
+            sel.innerHTML = '<option value="">All Players</option>';
+            players.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.name;
+                opt.textContent = p.name;
+                if (p.name === current) opt.selected = true;
+                sel.appendChild(opt);
             });
         }
-        canvas.addEventListener('wheel',e=>{e.preventDefault();mapZoom=Math.max(0.1,Math.min(20,mapZoom*(e.deltaY>0?0.9:1.1)));drawMap();});
 
-        // Drag to pan
-        let isDragging=false, dragStartX=0, dragStartZ=0, dragOrigOX=0, dragOrigOZ=0;
-        canvas.addEventListener('mousedown',e=>{isDragging=true;dragStartX=e.clientX;dragStartZ=e.clientY;dragOrigOX=mapOffsetX;dragOrigOZ=mapOffsetZ;canvas.style.cursor='grabbing';});
-        window.addEventListener('mousemove',e=>{
-            if(!isDragging)return;
-            const bs=Math.min(canvas.width,canvas.height)/256, sc=bs*mapZoom;
-            mapOffsetX=dragOrigOX+(e.clientX-dragStartX)/sc;
-            mapOffsetZ=dragOrigOZ+(e.clientY-dragStartZ)/sc;
-            drawMap();
-        });
-        window.addEventListener('mouseup',()=>{if(isDragging){isDragging=false;canvas.style.cursor='grab';}});
-        canvas.style.cursor='grab';
-        window.addEventListener('resize',resizeCanvas);resizeCanvas();
+        function update3DMap(){
+            // Remove players no longer present
+            const activeNames=new Set(players.map(p=>p.name));
+            for(const[name,obj] of Object.entries(playerObjects)){
+                if(!activeNames.has(name)){
+                    scene.remove(obj.group);
+                    scene.remove(obj.trailLine);
+                    delete playerObjects[name];
+                }
+            }
+
+            // Update player positions
+            players.forEach(p=>{
+                const obj=getOrCreatePlayer(p.name);
+                obj.group.position.set(p.x,p.y,p.z);
+                updateCoordLabel(obj,p.x,p.y,p.z);
+            });
+
+            // Follow focused player
+            if (focusedPlayer) {
+                const fp = players.find(p => p.name === focusedPlayer);
+                if (fp) {
+                    // Smoothly move the orbit target to the player
+                    controls.target.lerp(new THREE.Vector3(fp.x, fp.y, fp.z), 0.1);
+                }
+            }
+
+            // Update trail lines
+            if(showTracePaths){
+                const now=Date.now()/1000;
+                for(const[name,obj] of Object.entries(playerObjects)){
+                    const trail=playerTrails[name];
+                    if(!trail||trail.length<2){obj.trailGeo.setDrawRange(0,0);continue;}
+                    obj.trailLine.visible=true;
+                    const recent=trail.filter(pt=>now-pt[0]<TRAIL_WINDOW);
+                    const count=Math.min(recent.length,obj.maxTrailPts);
+                    for(let i=0;i<count;i++){
+                        const pt=recent[recent.length-count+i];
+                        obj.trailPositions[i*3]=pt[1];
+                        obj.trailPositions[i*3+1]=pt[2]+0.3; // slightly above ground
+                        obj.trailPositions[i*3+2]=pt[3];
+                        const age=(now-pt[0])/TRAIL_WINDOW;
+                        const a=Math.max(0,1-age);
+                        obj.trailColors[i*3]=obj.color.r*a;
+                        obj.trailColors[i*3+1]=obj.color.g*a;
+                        obj.trailColors[i*3+2]=obj.color.b*a;
+                    }
+                    obj.trailGeo.attributes.position.needsUpdate=true;
+                    obj.trailGeo.attributes.color.needsUpdate=true;
+                    obj.trailGeo.setDrawRange(0,count);
+                }
+            }else{
+                for(const obj of Object.values(playerObjects)){
+                    obj.trailLine.visible=false;
+                }
+            }
+        }
+
+        function resizeRenderer(){
+            const w=mapContainer.clientWidth,h=mapContainer.clientHeight;
+            if(w===0||h===0)return;
+            camera.aspect=w/h;camera.updateProjectionMatrix();
+            renderer.setSize(w,h);
+        }
+
+        // --- Block activity dots ---
+        const BLOCK_DOT_LIFETIME=300; // 5 minutes
+        const blockDots=[]; // {mesh, time}
+        const placedMat=new THREE.MeshBasicMaterial({color:0x107c10,transparent:true});
+        const brokenMat=new THREE.MeshBasicMaterial({color:0xd13438,transparent:true});
+        const dotGeo=new THREE.SphereGeometry(0.5,6,6);
+
+        function addBlockDot(type,x,y,z,t){
+            const mat=(type==='placed'?placedMat:brokenMat).clone();
+            const mesh=new THREE.Mesh(dotGeo,mat);
+            mesh.position.set(x,y+0.5,z);
+            scene.add(mesh);
+            blockDots.push({mesh,time:t,mat});
+        }
+
+        function updateBlockDots(){
+            const now=Date.now()/1000;
+            for(let i=blockDots.length-1;i>=0;i--){
+                const d=blockDots[i];
+                const age=now-d.time;
+                if(age>BLOCK_DOT_LIFETIME){
+                    scene.remove(d.mesh);
+                    d.mat.dispose();
+                    blockDots.splice(i,1);
+                }else{
+                    d.mat.opacity=Math.max(0,1-age/BLOCK_DOT_LIFETIME)*0.8;
+                }
+            }
+        }
+
+        function animate(){
+            requestAnimationFrame(animate);
+            controls.update();
+            update3DMap();
+            updateBlockDots();
+            renderer.render(scene,camera);
+        }
+
+        window.addEventListener('resize',resizeRenderer);
+        setTimeout(()=>{resizeRenderer();animate();},100);
 
         // --- Socket Events ---
         socket.on('server_status',data=>updateUI(data.running));
         socket.on('log',entry=>addLog(entry));
         socket.on('players_update',data=>{
-            players=data;document.getElementById('playerCount').textContent=players.length+' player'+(players.length!==1?'s':'')+' connected';drawMap();
+            players=data;document.getElementById('playerCount').textContent=players.length+' player'+(players.length!==1?'s':'')+' connected';
+            updateFocusDropdown();
         });
         socket.on('player_stats_update',data=>{
             // Extract position trails for the map
@@ -887,9 +1306,11 @@
                 }
             }
         });
+        socket.on('block_event',data=>{
+            addBlockDot(data.type, data.x, data.y, data.z, data.t);
+        });
         socket.on('player_joined',data=>addLog({timestamp:new Date().toLocaleTimeString(),message:data.name+' connected',level:'success'}));
         socket.on('player_left',data=>addLog({timestamp:new Date().toLocaleTimeString(),message:data.name+' disconnected',level:'warn'}));
-        setInterval(drawMap,1000);
     </script>
 </body>
 </html>

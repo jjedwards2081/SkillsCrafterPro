@@ -62,7 +62,7 @@ def _new_player_stats(name):
 
 
 def _ws_server_process(queue, cmd_queue, host, port, stop_event,
-                        welcome_message, welcome_color):
+                        welcome_message, welcome_color, chat_enabled_flag):
     MC_COLOR_CODES = {
         'dark_red': '\u00a74', 'red': '\u00a7c', 'gold': '\u00a76',
         'yellow': '\u00a7e', 'dark_green': '\u00a72', 'green': '\u00a7a',
@@ -78,6 +78,14 @@ def _ws_server_process(queue, cmd_queue, host, port, stop_event,
 
     TRAIL_INTERVAL = 2.0    # seconds between trail samples
     last_trail_time = {}    # name -> last trail timestamp
+
+    PROXIMITY_RADIUS = 15   # blocks — within this distance = "near each other"
+    PROXIMITY_INTERVAL = 5  # seconds between proximity checks
+    last_proximity_check = [0.0]
+    # proximity_log: list of snapshots [{t, pairs: [{a, b, dist}, ...]}]
+    proximity_log = []
+    # proximity_totals: {frozenset(a,b): total_seconds_near}
+    proximity_totals = {}
 
     def send(event, data):
         try:
@@ -140,6 +148,46 @@ def _ws_server_process(queue, cmd_queue, host, port, stop_event,
         # Also send stats periodically (piggyback on position updates)
         send("player_stats_update", get_all_stats())
 
+        # Proximity check
+        now2 = time.time()
+        if now2 - last_proximity_check[0] >= PROXIMITY_INTERVAL:
+            last_proximity_check[0] = now2
+            check_proximity()
+
+    def check_proximity():
+        """Check which players are near each other and update totals."""
+        active = [s for s in player_stats.values() if s["disconnected_at"] is None]
+        if len(active) < 2:
+            return
+
+        now = time.time()
+        pairs = []
+        for i in range(len(active)):
+            for j in range(i + 1, len(active)):
+                a, b = active[i], active[j]
+                dx = a["x"] - b["x"]
+                dz = a["z"] - b["z"]
+                dist = (dx*dx + dz*dz) ** 0.5
+                if dist <= PROXIMITY_RADIUS:
+                    pair_key = tuple(sorted([a["name"], b["name"]]))
+                    proximity_totals[pair_key] = proximity_totals.get(pair_key, 0) + PROXIMITY_INTERVAL
+                    pairs.append({"a": a["name"], "b": b["name"], "dist": round(dist, 1)})
+
+        # Build snapshot for the frontend
+        snapshot = {
+            "timestamp": round(now, 1),
+            "pairs": pairs,
+            "totals": {f"{k[0]}|{k[1]}": v for k, v in proximity_totals.items()},
+            "players": [s["name"] for s in active],
+        }
+        proximity_log.append(snapshot)
+        # Keep last 30 min of snapshots
+        cutoff = now - 1800
+        while proximity_log and proximity_log[0]["timestamp"] < cutoff:
+            proximity_log.pop(0)
+
+        send("proximity_update", snapshot)
+
     def extract_player_info(body):
         properties = body.get("properties", {})
         player_obj = body.get("player", None)
@@ -185,11 +233,16 @@ def _ws_server_process(queue, cmd_queue, host, port, stop_event,
             properties = body.get("properties", {})
             sender = properties.get("Sender", body.get("sender", name or "Unknown"))
             message = properties.get("Message", body.get("message", ""))
-            if sender != "Server":
+            if sender != "Server" and not message.startswith("\u00a7b[AI]"):
                 log(f"[Chat] {sender}: {message}")
                 if s:
                     s["messages_sent"] += 1
                     s["messages"].append({"time": time.strftime("%H:%M:%S"), "text": message})
+                # Check for @ai or @build commands
+                msg_lower = message.strip().lower()
+                if chat_enabled_flag.is_set() and (msg_lower.startswith("@ai") or msg_lower.startswith("@build")):
+                    player_pos = {"x": s["x"], "y": s["y"], "z": s["z"]} if s else {"x": 0, "y": 65, "z": 0}
+                    send("chat_request", {"player": sender, "message": message.strip(), "pos": player_pos})
         elif event_name == "PlayerJoin":
             log(f"Player joined the world: {name or 'Unknown'}", "success")
         elif event_name == "PlayerLeave":
@@ -203,6 +256,7 @@ def _ws_server_process(queue, cmd_queue, host, port, stop_event,
             if s:
                 s["blocks_placed"] += 1
                 s["blocks_placed_types"][block] = s["blocks_placed_types"].get(block, 0) + 1
+                send("block_event", {"type": "placed", "x": s["x"], "y": s["y"], "z": s["z"], "t": time.time()})
         elif event_name == "BlockBroken":
             properties = body.get("properties", {})
             block = properties.get("Block", "unknown")
@@ -211,6 +265,7 @@ def _ws_server_process(queue, cmd_queue, host, port, stop_event,
             if s:
                 s["blocks_broken"] += 1
                 s["blocks_broken_types"][block] = s["blocks_broken_types"].get(block, 0) + 1
+                send("block_event", {"type": "broken", "x": s["x"], "y": s["y"], "z": s["z"], "t": time.time()})
         elif event_name == "ItemAcquired":
             properties = body.get("properties", {})
             item = properties.get("Item", "unknown")
@@ -315,12 +370,15 @@ class MinecraftWSServer:
         self.host = "0.0.0.0"
         self.port = 19131
         self.players = {}
-        self.player_stats = {}  # full stats dict from subprocess
+        self.player_stats = {}
         self.welcome_message = ""
         self.welcome_color = "green"
+        self.chat_enabled = False
+        self.chat_handler = None  # set by app.py
         self._process = None
         self._queue = None
         self._cmd_queue = None
+        self._chat_enabled_flag = None
         self._stop_event = None
         self._reader_thread = None
         self.running = False
@@ -336,6 +394,11 @@ class MinecraftWSServer:
                 self.players = {p["name"]: p for p in data}
             elif event == "player_stats_update":
                 self.player_stats = data
+            elif event == "chat_request":
+                # Route to the chat handler in app.py
+                if self.chat_handler:
+                    self.chat_handler(data["player"], data["message"], data["pos"])
+                continue  # don't forward to browser
             elif event == "server_status" and not data.get("running"):
                 self.running = False
 
@@ -355,10 +418,13 @@ class MinecraftWSServer:
         self._queue = multiprocessing.Queue()
         self._cmd_queue = multiprocessing.Queue()
         self._stop_event = multiprocessing.Event()
+        self._chat_enabled_flag = multiprocessing.Event()
+        if self.chat_enabled:
+            self._chat_enabled_flag.set()
         self._process = multiprocessing.Process(
             target=_ws_server_process,
             args=(self._queue, self._cmd_queue, self.host, self.port, self._stop_event,
-                  self.welcome_message, self.welcome_color),
+                  self.welcome_message, self.welcome_color, self._chat_enabled_flag),
             daemon=True,
         )
         self._process.start()

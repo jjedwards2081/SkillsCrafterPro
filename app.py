@@ -638,6 +638,147 @@ def run_assessment():
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 
+# ─── AI Chat System ───
+
+# Per-player conversation history: {player_name: [{role, content}, ...]}
+player_conversations = {}
+chat_enabled = False
+
+AI_CHAT_SYSTEM = (
+    "You are a helpful Minecraft Education assistant called Skills Crafter AI. "
+    "Keep responses short (1-3 sentences) and focused on Minecraft. "
+    "Be friendly, encouraging, and educational. "
+    "You can help with crafting recipes, game mechanics, building tips, and redstone. "
+    "Do not discuss topics unrelated to Minecraft."
+)
+
+from build_toolkit import generate_build_commands, get_llm_build_prompt, STRUCTURE_SPECS
+
+
+def _handle_chat_request(player_name, message, player_pos):
+    """Process an @ai or @build chat message and send response back to Minecraft."""
+    import threading
+
+    def process():
+        try:
+            if message.lower().startswith("@build"):
+                _handle_build(player_name, message[6:].strip(), player_pos)
+            elif message.lower().startswith("@ai"):
+                _handle_ai_chat(player_name, message[3:].strip())
+        except Exception as e:
+            print(f"[CHAT] Error for {player_name}: {e}", flush=True)
+            _send_chat_response(player_name, f"Sorry, I encountered an error: {str(e)[:80]}")
+
+    # Run in a thread so it doesn't block the queue reader
+    threading.Thread(target=process, daemon=True).start()
+
+
+def _handle_ai_chat(player_name, user_message):
+    """Handle @ai conversation."""
+    if not user_message:
+        _send_chat_response(player_name, "Hi! Ask me anything about Minecraft. Use @ai followed by your question.")
+        return
+
+    # Get or create conversation history
+    if player_name not in player_conversations:
+        player_conversations[player_name] = []
+
+    history = player_conversations[player_name]
+    history.append({"role": "user", "content": user_message})
+
+    # Keep history manageable (last 10 exchanges)
+    if len(history) > 20:
+        history[:] = history[-20:]
+
+    print(f"[CHAT] @ai from {player_name}: {user_message}", flush=True)
+
+    client, provider, model = _get_llm_client()
+    if not client:
+        _send_chat_response(player_name, "AI is not configured. Ask the server operator to add an API key.")
+        return
+
+    try:
+        if provider == "anthropic":
+            resp = client.messages.create(
+                model=model, max_tokens=150, system=AI_CHAT_SYSTEM,
+                messages=history, timeout=20)
+            reply = resp.content[0].text
+        else:
+            messages = [{"role": "system", "content": AI_CHAT_SYSTEM}] + history
+            resp = client.chat.completions.create(
+                model=model, messages=messages, max_tokens=150, timeout=20)
+            reply = resp.choices[0].message.content
+
+        history.append({"role": "assistant", "content": reply})
+        print(f"[CHAT] Reply to {player_name}: {reply[:80]}", flush=True)
+        _send_chat_response(player_name, reply)
+    except Exception as e:
+        print(f"[CHAT] LLM error: {e}", flush=True)
+        _send_chat_response(player_name, "Sorry, I couldn't process that right now. Try again in a moment.")
+
+
+def _handle_build(player_name, description, pos):
+    """Handle @build command — LLM generates a spec, toolkit builds it."""
+    if not description:
+        types = ", ".join(STRUCTURE_SPECS.keys())
+        _send_chat_response(player_name, f"Tell me what to build! Types: {types}. Example: @build large stone house")
+        return
+
+    print(f"[BUILD] @build from {player_name}: {description}", flush=True)
+
+    client, provider, model = _get_llm_client()
+    if not client:
+        _send_chat_response(player_name, "AI is not configured.")
+        return
+
+    _send_chat_response(player_name, f"Planning your {description}...")
+
+    try:
+        # Step 1: LLM generates a structured build spec
+        system = get_llm_build_prompt()
+        prompt = f"Build request: {description}\nReturn ONLY the JSON spec object for this specific build. Do not repeat previous builds."
+        print(f"[BUILD] Sending to LLM: {prompt}", flush=True)
+        result = _llm_chat(prompt, system=system, max_tokens=300, timeout=20)
+        print(f"[BUILD] LLM raw response: {result[:300]}", flush=True)
+
+        # Extract JSON spec
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        if start < 0 or end <= start:
+            _send_chat_response(player_name, "Sorry, I couldn't plan that build. Try something like: @build house")
+            return
+
+        spec = json.loads(result[start:end])
+        struct_type = spec.get("type", "unknown")
+        print(f"[BUILD] LLM spec: type={struct_type}, {json.dumps(spec)}", flush=True)
+
+        # Step 2: Toolkit generates precise commands
+        commands = generate_build_commands(spec)
+
+        _send_chat_response(player_name, f"Building {struct_type} ({len(commands)} commands)...")
+
+        # Step 3: Execute commands with small batches
+        for cmd in commands:
+            mc_server.send_command(cmd)
+
+        _send_chat_response(player_name, f"Done! Built a {struct_type} with {len(commands)} blocks.")
+        print(f"[BUILD] Executed {len(commands)} commands for {player_name}", flush=True)
+
+    except Exception as e:
+        print(f"[BUILD] Error: {e}", flush=True)
+        _send_chat_response(player_name, "Sorry, the build failed. Try: @build house, @build tower, @build fountain")
+
+
+def _send_chat_response(player_name, message):
+    """Send a chat message back to a specific player in Minecraft."""
+    # Use tellraw for formatted response
+    raw = json.dumps({"rawtext": [{"text": "\u00a7b[AI] \u00a7f" + message}]})
+    mc_server.send_command(f'tellraw "{player_name}" {raw}')
+
+
+mc_server.chat_handler = _handle_chat_request
+
+
 # ─── Game Commands API ───
 
 @socketio.on("game_command")
@@ -658,12 +799,27 @@ def handle_game_command(data):
 
 # ─── WebSocket Events ───
 
+@socketio.on("set_chat")
+def handle_set_chat(data):
+    global chat_enabled
+    chat_enabled = data.get("enabled", False)
+    mc_server.chat_enabled = chat_enabled
+    # Update the flag in the subprocess
+    if mc_server._chat_enabled_flag:
+        if chat_enabled:
+            mc_server._chat_enabled_flag.set()
+        else:
+            mc_server._chat_enabled_flag.clear()
+    print(f"[CHAT] AI chat {'enabled' if chat_enabled else 'disabled'}", flush=True)
+
+
 @socketio.on("start_server")
 def handle_start_server():
     if not mc_server.running:
         settings = load_settings()
         mc_server.welcome_message = settings["welcome_message"]
         mc_server.welcome_color = settings["welcome_color"]
+        mc_server.chat_enabled = chat_enabled
         mc_server.start()
 
 
